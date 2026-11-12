@@ -52,7 +52,7 @@ def validate_document(data):
 
 
 def decode_embedded_record(image_path):
-    """Recover krea_sidecar from PNG iTXt without Pillow's 1 MiB text limit.
+    """Recover image_sidecar or legacy krea_sidecar iTXt without Pillow limits.
 
     Verifies CRC for our metadata and bounds inflated text to 16 MiB.
     Large IDAT image-data chunks are skipped using seek, never decoded.
@@ -62,6 +62,7 @@ def decode_embedded_record(image_path):
     image = Path(image_path)
     if image.suffix.lower() != ".png" or not image.is_file():
         return None
+    legacy = None
     with image.open("rb") as stream:
         if stream.read(8) != b"\x89PNG\r\n\x1a\n":
             return None
@@ -71,7 +72,7 @@ def decode_embedded_record(image_path):
                 return None
             length, kind = struct.unpack(">I4s", head)
             if kind == b"IEND":
-                return None
+                return legacy
             if kind != b"iTXt" or length > MAX_SIDECAR_BYTES + 8192:
                 stream.seek(length + 4, 1)
                 continue
@@ -80,7 +81,7 @@ def decode_embedded_record(image_path):
             if len(body) != length or len(checksum) != 4:
                 raise ValueError("Truncated PNG iTXt metadata: " + str(image))
             label, sep, remainder = body.partition(b"\0")
-            if label != b"krea_sidecar" or sep != b"\0":
+            if label not in {b"image_sidecar", b"krea_sidecar"} or sep != b"\0":
                 continue
             if (zlib.crc32(kind + body) & 0xffffffff) != struct.unpack(">I", checksum)[0]:
                 raise ValueError("Corrupt embedded sidecar checksum: " + str(image))
@@ -107,8 +108,13 @@ def decode_embedded_record(image_path):
                 document = json.loads(raw.decode("utf-8"))
             except (UnicodeError, json.JSONDecodeError) as error:
                 raise ValueError("Malformed embedded sidecar JSON: " + str(image)) from error
-            return validate_document(document)
-    return None
+            document = validate_document(document)
+            if label == b"image_sidecar":
+                return document
+            # Older images retain their original Krea-prefixed backup. Keep
+            # scanning because image_sidecar has precedence when both exist.
+            legacy = document
+    return legacy
 
 
 def read_sidecar(image_path):
