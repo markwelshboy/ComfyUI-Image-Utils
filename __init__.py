@@ -136,7 +136,7 @@ class ImageUtilsAppendProcessingEvent:
 
 
 class ImageUtilsSaveImageWithSidecar:
-    """Save PNG plus .sidecar, and embed a backup in PNG's krea_sidecar iTXt.
+    """Save PNG plus .sidecar, and embed a backup in PNG's image_sidecar iTXt.
 
     Hidden prompt and extra_pnginfo preserve regular ComfyUI image metadata.
     The sidecar JSON is the source of provenance and processing history.
@@ -213,10 +213,10 @@ class ImageUtilsSaveImageWithSidecar:
                 metadata.add_text("prompt", json.dumps(prompt, ensure_ascii=False))
             if extra_pnginfo:
                 for key, value in extra_pnginfo.items():
-                    if key in {"prompt", "krea_sidecar"}:
+                    if key in {"prompt", "krea_sidecar", "image_sidecar"}:
                         continue
                     metadata.add_text(key, json.dumps(value, ensure_ascii=False))
-            metadata.add_itxt("krea_sidecar", content, zip=True)
+            metadata.add_itxt("image_sidecar", content, zip=True)
             folder_path = Path(folder)
             temp_png = folder_path / ("." + uuid.uuid4().hex + ".png")
             temp_sidecar = folder_path / ("." + uuid.uuid4().hex + ".sidecar")
