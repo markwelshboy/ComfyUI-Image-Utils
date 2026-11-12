@@ -1,0 +1,139 @@
+"""Regression tests. No ComfyUI, NumPy, Torch or network access required."""
+import importlib.util
+import json
+import tempfile
+import unittest
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def module():
+    spec = importlib.util.spec_from_file_location("image_utils_sidecar", ROOT / "sidecar.py")
+    value = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(value)
+    return value
+
+
+def nodes():
+    import sys
+    spec = importlib.util.spec_from_file_location(
+        "image_utils_test_package", ROOT / "__init__.py",
+        submodule_search_locations=[str(ROOT)]
+    )
+    value = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = value
+    spec.loader.exec_module(value)
+    return value
+
+
+class SidecarTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.dir = Path(self.temp.name)
+        self.api = module()
+
+    def test_spaces_in_names_and_missing_sidecars(self):
+        path = self.dir / "image with spaces.png"
+        path.write_bytes(b"not decoded; only path needed")
+        obj, found, side = self.api.read_sidecar(path)
+        self.assertFalse(found)
+        self.assertEqual(obj["tags"], [])
+        self.assertEqual(Path(side), self.dir / "image with spaces.sidecar")
+        self.assertEqual(self.api.sidecar_candidates(path)[1], self.dir / "image with spaces.sidecar")
+
+    def test_json_fields_and_stem_sidecar(self):
+        path = self.dir / "image with spaces.png"
+        sidecar = path.with_suffix(".sidecar")
+        data = {"version":1,"tags":["eyes-closed"],"controls":{
+            "eye_detailer":{"enabled":False,"denoise":0.2},
+            "eye detailer":{"enabled":"true"}},"prompts":{"eye_detailer":"Closed lids"}}
+        sidecar.write_text(json.dumps(data), encoding="utf-8")
+        loaded, exists, found_path = self.api.read_sidecar(path)
+        self.assertTrue(exists)
+        self.assertEqual(found_path, str(sidecar))
+        self.assertEqual(self.api.get_field(loaded,"controls.eye_detailer.enabled"), (False,True))
+        self.assertEqual(self.api.get_field(loaded,'controls["eye detailer"].enabled'), ("true",True))
+        self.assertEqual(self.api.get_field(loaded,"tags[0]"), ("eyes-closed",True))
+        self.assertEqual(self.api.get_field(loaded,"tags[9]"), (None,False))
+        self.assertEqual(self.api.get_field(loaded,"missing"), (None,False))
+        self.assertEqual(self.api.typed_field(loaded,"controls.eye_detailer.enabled"),
+                         ("false", False, 0, 0.0, True))
+        self.assertEqual(self.api.typed_field(loaded,"controls.eye_detailer.denoise"),
+                         ("0.2", True, 0, 0.2, True))
+        self.assertEqual(self.api.typed_field(loaded,"unknown", "default", True, 9, 4.5),
+                         ("default", True, 9, 4.5, False))
+        self.assertTrue(self.api.has_tag(loaded,"eyes-closed"))
+        self.assertFalse(self.api.has_tag(loaded,"eyes-half-closed"))
+
+    def test_full_filename_fallback_overrides_stem_sidecar(self):
+        png = self.dir / "img.png"
+        jpg = self.dir / "img.jpg"
+        for path, tags in ((png,["png"]),(jpg,["jpg"])):
+            Path(str(path)+".sidecar").write_text(
+                json.dumps({"version":1,"tags":tags}), encoding="utf-8")
+        png.with_suffix(".sidecar").write_text(
+            json.dumps({"version":1,"tags":["incorrect"]}), encoding="utf-8")
+        self.assertEqual(self.api.read_sidecar(png)[0]["tags"],["png"])
+        self.assertEqual(self.api.read_sidecar(jpg)[0]["tags"],["jpg"])
+
+    def test_bad_json_and_unexpected_schema_are_explicit_errors(self):
+        target=self.dir/"image.png"
+        target.with_suffix(".sidecar").write_text("{broken")
+        with self.assertRaisesRegex(ValueError,"Invalid sidecar JSON"):
+            self.api.read_sidecar(target)
+        target.with_suffix(".sidecar").write_text('{"version": 3}')
+        with self.assertRaisesRegex(ValueError,"Unsupported sidecar version"):
+            self.api.read_sidecar(target)
+        target.with_suffix(".sidecar").write_text('{"version":1,"tags":"eyes-closed"}')
+        with self.assertRaisesRegex(ValueError,"list of strings"):
+            self.api.read_sidecar(target)
+
+    def test_sidecar_hash_changes_without_image_modification(self):
+        source=self.dir/"img.png"
+        signature1=self.api.sidecar_signature(source)
+        path=source.with_suffix(".sidecar")
+        path.write_text('{"tags":[]}')
+        signature2=self.api.sidecar_signature(source)
+        path.write_text('{"tags":["eyes-closed"]}')
+        signature3=self.api.sidecar_signature(source)
+        self.assertNotEqual(signature1,signature2)
+        self.assertNotEqual(signature2,signature3)
+
+    def test_boolean_coercion_and_prompt_fallback(self):
+        self.assertFalse(self.api.bool_value("false"))
+        self.assertFalse(self.api.bool_value("0"))
+        self.assertTrue(self.api.bool_value("True"))
+        self.assertEqual(self.api.conditional_prompt("detailed iris", "no iris", True),
+                         ("no iris", True))
+        self.assertEqual(self.api.conditional_prompt("detailed iris", "no iris", False),
+                         ("detailed iris", False))
+        self.assertEqual(self.api.conditional_prompt("detailed iris", "", True),
+                         ("detailed iris", False))
+
+    def test_comfy_nodes_have_correct_static_types(self):
+        pack=nodes()
+        mapping=pack.NODE_CLASS_MAPPINGS
+        self.assertEqual(len(mapping),4)
+        loader=mapping["ImageUtilsSidecarLoader"]()
+        self.assertEqual(mapping["ImageUtilsSidecarLoader"].RETURN_TYPES,
+                         ("STRING","BOOLEAN","STRING"))
+        image=self.dir/"image with spaces.png"
+        image.with_suffix(".sidecar").write_text(
+            '{"version":1,"tags":["eyes-closed"],"controls":{"eye_detailer":{"enabled":false}}}')
+        json_text,exists,sidecar=loader.load(str(image))
+        self.assertTrue(exists)
+        self.assertEqual(json.loads(json_text)["tags"],["eyes-closed"])
+        field=mapping["ImageUtilsJsonFieldExtractor"]()
+        self.assertEqual(field.extract(json_text,"controls.eye_detailer.enabled"),
+                         ("false", False, 0, 0.0, True))
+        tags=mapping["ImageUtilsJsonTagChecker"]()
+        self.assertEqual(tags.check(json_text,"eyes-closed"),(True,))
+        prompt=mapping["ImageUtilsConditionalPrompt"]()
+        self.assertEqual(prompt.select("open irises","closed lids",True),
+                         ("closed lids", True))
+
+
+if __name__=="__main__":
+    unittest.main()
