@@ -181,6 +181,21 @@ class SidecarTests(unittest.TestCase):
         external.unlink()
         self.assertEqual(self.api.read_sidecar(path)[0]["tags"], ["eyes-closed"])
 
+
+    def test_new_metadata_key_takes_priority_over_legacy_on_same_png(self):
+        from PIL import Image, PngImagePlugin
+        path = self.dir / "both formats.png"
+        info = PngImagePlugin.PngInfo()
+        info.add_itxt("krea_sidecar", json.dumps({"version": 1,
+            "tags": ["old"], "origin": {"source_filename": "old.png"}}), zip=True)
+        info.add_itxt("image_sidecar", json.dumps({"version": 1,
+            "tags": ["new"], "origin": {"source_filename": "new.png"}}), zip=True)
+        Image.new("RGB", (2, 2)).save(path, pnginfo=info)
+        data, found, _ = self.api.read_sidecar(path)
+        self.assertTrue(found)
+        self.assertEqual(data["origin"]["source_filename"], "new.png")
+        self.assertEqual(data["tags"], ["new"])
+
     def test_embedded_backup_larger_than_pillow_default_text_limit(self):
         from PIL import Image, PngImagePlugin
         large = {
@@ -190,7 +205,7 @@ class SidecarTests(unittest.TestCase):
         }
         path = self.dir / "large generated.png"
         meta = PngImagePlugin.PngInfo()
-        meta.add_itxt("krea_sidecar", json.dumps(large), zip=True)
+        meta.add_itxt("image_sidecar", json.dumps(large), zip=True)
         Image.new("RGB", (2, 2)).save(path, pnginfo=meta)
         recovered, found, sidecar_path = self.api.read_sidecar(path)
         self.assertTrue(found)
@@ -244,7 +259,8 @@ class SidecarTests(unittest.TestCase):
         with Image.open(image) as raw:
             self.assertEqual(json.loads(raw.info["prompt"])["3"]["class_type"], "KSampler")
             self.assertEqual(json.loads(raw.info["workflow"])["nodes"], ["detailer"])
-            embedded = json.loads(raw.info["krea_sidecar"])
+            embedded = json.loads(raw.info["image_sidecar"])
+            self.assertNotIn("krea_sidecar", raw.info)
         disk = json.loads(sidecar.read_text())
         self.assertEqual(embedded, disk)
         self.assertEqual(embedded["origin"], first["origin"])
