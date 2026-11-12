@@ -56,6 +56,11 @@ def decode_embedded_record(image_path):
     image = Path(image_path)
     if image.suffix.lower() != ".png" or not image.is_file():
         return None
+    # Only attempt decoding actual PNG signature; other files can have a .png
+    # suffix without containing a valid PNG, especially in metadata tests.
+    with image.open("rb") as source:
+        if source.read(8) != b"\x89PNG\r\n\x1a\n":
+            return None
     from PIL import Image
     with Image.open(image) as opened:
         content = opened.info.get("krea_sidecar")
