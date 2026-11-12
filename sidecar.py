@@ -15,8 +15,8 @@ import json
 import math
 from pathlib import Path
 
-MAX_SIDECAR_BYTES = 1024 * 1024
-DEFAULT_DOC = {"version": 1, "tags": [], "controls": {}, "prompts": {}}
+MAX_SIDECAR_BYTES = 16 * 1024 * 1024
+DEFAULT_DOC = {"version": 1, "tags": [], "controls": {}, "prompts": {}, "history": []}
 
 
 def sidecar_candidates(image_path):
@@ -44,7 +44,28 @@ def validate_document(data):
     for key in ("controls", "prompts"):
         if key in data and not isinstance(data[key], dict):
             raise ValueError("Sidecar '" + key + "' must be an object.")
+    if "history" in data and not isinstance(data["history"], list):
+        raise ValueError("Sidecar 'history' must be a list.")
+    if "origin" in data and not isinstance(data["origin"], dict):
+        raise ValueError("Sidecar 'origin' must be an object.")
     return data
+
+
+def decode_embedded_record(image_path):
+    """Recover krea_sidecar iTXt metadata from a PNG (using ComfyUI's Pillow)."""
+    image = Path(image_path)
+    if image.suffix.lower() != ".png" or not image.is_file():
+        return None
+    from PIL import Image
+    with Image.open(image) as opened:
+        content = opened.info.get("krea_sidecar")
+    if content is None:
+        return None
+    if not isinstance(content, str):
+        raise ValueError("Embedded krea_sidecar is not text: " + str(image))
+    if len(content.encode("utf-8")) > MAX_SIDECAR_BYTES:
+        raise ValueError("Embedded krea_sidecar is too large: " + str(image))
+    return validate_document(load_document(content))
 
 
 def read_sidecar(image_path):
@@ -54,7 +75,10 @@ def read_sidecar(image_path):
     """
     chosen = sidecar_for_image(image_path)
     if not chosen.is_file():
-        return dict(version=1, tags=[], controls={}, prompts={}), False, str(chosen.absolute())
+        embedded = decode_embedded_record(image_path)
+        if embedded is not None:
+            return embedded, True, str(chosen.absolute())
+        return dict(version=1, tags=[], controls={}, prompts={}, history=[]), False, str(chosen.absolute())
     if chosen.stat().st_size > MAX_SIDECAR_BYTES:
         raise ValueError("Sidecar exceeds 1 MiB: " + str(chosen))
     try:
@@ -186,9 +210,39 @@ def sidecar_signature(image_path):
     """Return content-aware change signature so ComfyUI invalidates cached nodes."""
     path = sidecar_for_image(image_path)
     if not path.is_file():
+        image = Path(image_path)
+        if image.suffix.lower() == ".png" and image.is_file():
+            stamp = image.stat()
+            return ("embedded", str(image.absolute()), stamp.st_mtime_ns, stamp.st_size)
         return ("missing", str(path.absolute()))
     h = hashlib.sha256()
     with path.open("rb") as stream:
         for piece in iter(lambda: stream.read(65536), b""):
             h.update(piece)
     return (str(path.absolute()), h.hexdigest())
+
+
+def append_processing_event(value, *, stage, actual_prompt="", settings_json="{}",
+                            input_image_path="", seed=-1):
+    """Make a new document, retaining the original record and all previous steps."""
+    from datetime import datetime, timezone
+    import copy
+    document = copy.deepcopy(validate_document(load_document(value)))
+    try:
+        settings = json.loads(settings_json or "{}")
+    except json.JSONDecodeError as error:
+        raise ValueError("Invalid processing settings JSON: " + str(error)) from error
+    if not isinstance(settings, dict):
+        raise ValueError("Processing settings must be a JSON object.")
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "stage": stage.strip() or "processing",
+        "actual_prompt": actual_prompt,
+        "settings": settings,
+    }
+    if input_image_path:
+        event["input_image_path"] = str(input_image_path)
+    if isinstance(seed, int) and seed >= 0:
+        event["seed"] = seed
+    document.setdefault("history", []).append(event)
+    return document
