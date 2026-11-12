@@ -15,8 +15,8 @@ import json
 import math
 from pathlib import Path
 
-MAX_SIDECAR_BYTES = 1024 * 1024
-DEFAULT_DOC = {"version": 1, "tags": [], "controls": {}, "prompts": {}}
+MAX_SIDECAR_BYTES = 16 * 1024 * 1024
+DEFAULT_DOC = {"version": 1, "tags": [], "controls": {}, "prompts": {}, "history": []}
 
 
 def sidecar_candidates(image_path):
@@ -44,7 +44,71 @@ def validate_document(data):
     for key in ("controls", "prompts"):
         if key in data and not isinstance(data[key], dict):
             raise ValueError("Sidecar '" + key + "' must be an object.")
+    if "history" in data and not isinstance(data["history"], list):
+        raise ValueError("Sidecar 'history' must be a list.")
+    if "origin" in data and not isinstance(data["origin"], dict):
+        raise ValueError("Sidecar 'origin' must be an object.")
     return data
+
+
+def decode_embedded_record(image_path):
+    """Recover krea_sidecar from PNG iTXt without Pillow's 1 MiB text limit.
+
+    Verifies CRC for our metadata and bounds inflated text to 16 MiB.
+    Large IDAT image-data chunks are skipped using seek, never decoded.
+    """
+    import struct
+    import zlib
+    image = Path(image_path)
+    if image.suffix.lower() != ".png" or not image.is_file():
+        return None
+    with image.open("rb") as stream:
+        if stream.read(8) != b"\x89PNG\r\n\x1a\n":
+            return None
+        for _ in range(100000):
+            head = stream.read(8)
+            if len(head) != 8:
+                return None
+            length, kind = struct.unpack(">I4s", head)
+            if kind == b"IEND":
+                return None
+            if kind != b"iTXt" or length > MAX_SIDECAR_BYTES + 8192:
+                stream.seek(length + 4, 1)
+                continue
+            body = stream.read(length)
+            checksum = stream.read(4)
+            if len(body) != length or len(checksum) != 4:
+                raise ValueError("Truncated PNG iTXt metadata: " + str(image))
+            label, sep, remainder = body.partition(b"\0")
+            if label != b"krea_sidecar" or sep != b"\0":
+                continue
+            if (zlib.crc32(kind + body) & 0xffffffff) != struct.unpack(">I", checksum)[0]:
+                raise ValueError("Corrupt embedded sidecar checksum: " + str(image))
+            if len(remainder) < 2:
+                raise ValueError("Invalid embedded sidecar iTXt header: " + str(image))
+            compression, method = remainder[0], remainder[1]
+            _language, sep, remaining = remainder[2:].partition(b"\0")
+            if not sep:
+                raise ValueError("Invalid embedded sidecar language field")
+            _translated, sep, payload = remaining.partition(b"\0")
+            if not sep or method != 0 or compression not in (0, 1):
+                raise ValueError("Invalid embedded sidecar compression header")
+            if compression:
+                decoder = zlib.decompressobj()
+                raw = decoder.decompress(payload, MAX_SIDECAR_BYTES + 1)
+                if (len(raw) > MAX_SIDECAR_BYTES or decoder.unconsumed_tail
+                        or not decoder.eof):
+                    raise ValueError("Embedded sidecar is oversized or incomplete")
+            else:
+                raw = payload
+                if len(raw) > MAX_SIDECAR_BYTES:
+                    raise ValueError("Embedded sidecar is oversized")
+            try:
+                document = json.loads(raw.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError) as error:
+                raise ValueError("Malformed embedded sidecar JSON: " + str(image)) from error
+            return validate_document(document)
+    return None
 
 
 def read_sidecar(image_path):
@@ -54,7 +118,10 @@ def read_sidecar(image_path):
     """
     chosen = sidecar_for_image(image_path)
     if not chosen.is_file():
-        return dict(version=1, tags=[], controls={}, prompts={}), False, str(chosen.absolute())
+        embedded = decode_embedded_record(image_path)
+        if embedded is not None:
+            return embedded, True, str(chosen.absolute())
+        return dict(version=1, tags=[], controls={}, prompts={}, history=[]), False, str(chosen.absolute())
     if chosen.stat().st_size > MAX_SIDECAR_BYTES:
         raise ValueError("Sidecar exceeds 1 MiB: " + str(chosen))
     try:
@@ -186,9 +253,39 @@ def sidecar_signature(image_path):
     """Return content-aware change signature so ComfyUI invalidates cached nodes."""
     path = sidecar_for_image(image_path)
     if not path.is_file():
+        image = Path(image_path)
+        if image.suffix.lower() == ".png" and image.is_file():
+            stamp = image.stat()
+            return ("embedded", str(image.absolute()), stamp.st_mtime_ns, stamp.st_size)
         return ("missing", str(path.absolute()))
     h = hashlib.sha256()
     with path.open("rb") as stream:
         for piece in iter(lambda: stream.read(65536), b""):
             h.update(piece)
     return (str(path.absolute()), h.hexdigest())
+
+
+def append_processing_event(value, *, stage, actual_prompt="", settings_json="{}",
+                            input_image_path="", seed=-1):
+    """Make a new document, retaining the original record and all previous steps."""
+    from datetime import datetime, timezone
+    import copy
+    document = copy.deepcopy(validate_document(load_document(value)))
+    try:
+        settings = json.loads(settings_json or "{}")
+    except json.JSONDecodeError as error:
+        raise ValueError("Invalid processing settings JSON: " + str(error)) from error
+    if not isinstance(settings, dict):
+        raise ValueError("Processing settings must be a JSON object.")
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "stage": stage.strip() or "processing",
+        "actual_prompt": actual_prompt,
+        "settings": settings,
+    }
+    if input_image_path:
+        event["input_image_path"] = str(input_image_path)
+    if isinstance(seed, int) and seed >= 0:
+        event["seed"] = seed
+    document.setdefault("history", []).append(event)
+    return document

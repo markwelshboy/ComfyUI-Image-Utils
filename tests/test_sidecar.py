@@ -3,6 +3,7 @@ import importlib.util
 import json
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,7 +116,7 @@ class SidecarTests(unittest.TestCase):
     def test_comfy_nodes_have_correct_static_types(self):
         pack=nodes()
         mapping=pack.NODE_CLASS_MAPPINGS
-        self.assertEqual(len(mapping),4)
+        self.assertEqual(len(mapping),6)
         loader=mapping["ImageUtilsSidecarLoader"]()
         self.assertEqual(mapping["ImageUtilsSidecarLoader"].RETURN_TYPES,
                          ("STRING","BOOLEAN","STRING"))
@@ -133,6 +134,127 @@ class SidecarTests(unittest.TestCase):
         prompt=mapping["ImageUtilsConditionalPrompt"]()
         self.assertEqual(prompt.select("open irises","closed lids",True),
                          ("closed lids", True))
+
+
+    def test_append_processing_event_retains_original_prompt_and_workflow(self):
+        orig = {
+            "version": 1, "tags": ["eyes-closed"], "controls": {}, "prompts": {},
+            "origin": {"source_filename": "original.png",
+                       "seeds": [{"value": "12345"}],
+                       "metadata": {"workflow": {"nodes": ["original"]},
+                                    "prompt": {"3": {"inputs": {"seed": 12345}}}}},
+            "history": [],
+        }
+        first = self.api.append_processing_event(
+            orig, stage="eye-detailer",
+            actual_prompt="Closed lids, natural lashes, no visible iris",
+            input_image_path="/workspace/input/image with spaces.png",
+            settings_json='{"denoise": 0.18}', seed=5678)
+        self.assertEqual(first["origin"], orig["origin"])
+        self.assertEqual(first["history"][0]["actual_prompt"],
+                         "Closed lids, natural lashes, no visible iris")
+        self.assertEqual(first["history"][0]["settings"]["denoise"], .18)
+        second = self.api.append_processing_event(
+            first, stage="face-detailer", actual_prompt="Natural skin pores")
+        self.assertEqual(len(second["history"]), 2)
+        self.assertEqual(second["origin"], orig["origin"])
+
+    def test_embedded_png_recovers_when_sidecar_missing(self):
+        from PIL import Image, PngImagePlugin
+        path = self.dir / "detail result.png"
+        saved = {
+            "version": 1, "tags": ["eyes-closed"], "controls": {}, "prompts": {},
+            "origin": {"source_filename": "original.png", "seeds": [{"value": "99"}]},
+            "history": [{"stage": "eye-detailer", "actual_prompt": "Closed lids"}],
+        }
+        info = PngImagePlugin.PngInfo()
+        info.add_itxt("krea_sidecar", json.dumps(saved), zip=True)
+        Image.new("RGB", (4, 4), color=(80, 100, 130)).save(path, pnginfo=info)
+        actual, found, selected = self.api.read_sidecar(path)
+        self.assertTrue(found)
+        self.assertEqual(actual["origin"], saved["origin"])
+        self.assertEqual(actual["history"], saved["history"])
+        self.assertEqual(selected, str(path.with_suffix(".sidecar")))
+        external = path.with_suffix(".sidecar")
+        external.write_text(json.dumps({**saved, "tags": ["updated"]}))
+        self.assertEqual(self.api.read_sidecar(path)[0]["tags"], ["updated"])
+        external.unlink()
+        self.assertEqual(self.api.read_sidecar(path)[0]["tags"], ["eyes-closed"])
+
+    def test_embedded_backup_larger_than_pillow_default_text_limit(self):
+        from PIL import Image, PngImagePlugin
+        large = {
+            "version": 1, "tags": [], "controls": {}, "prompts": {},
+            "origin": {"metadata": {"prompt": {"long_text": "A" * 1_300_000}}},
+            "history": [],
+        }
+        path = self.dir / "large generated.png"
+        meta = PngImagePlugin.PngInfo()
+        meta.add_itxt("krea_sidecar", json.dumps(large), zip=True)
+        Image.new("RGB", (2, 2)).save(path, pnginfo=meta)
+        recovered, found, sidecar_path = self.api.read_sidecar(path)
+        self.assertTrue(found)
+        self.assertEqual(recovered["origin"], large["origin"])
+        self.assertFalse(Path(sidecar_path).exists())
+
+    def test_save_image_with_sidecar_and_embedded_backup(self):
+        # Minimal folder_paths stub, using real numpy/Pillow to verify PNG text
+        # and sidecar output. Does not need PyTorch/ComfyUI at test time.
+        import numpy as np
+        import sys
+        from PIL import Image
+        from types import SimpleNamespace
+        fake = SimpleNamespace(
+            get_output_directory=lambda: str(self.dir),
+            get_save_image_path=lambda prefix, base, width, height:
+                (str(self.dir), "detailer_%batch_num%", 1, "", prefix),
+        )
+        class FakeTensor:
+            def __init__(self, array):
+                self.array = array
+                self.shape = array.shape
+            def detach(self): return self
+            def cpu(self): return self
+            def numpy(self): return self.array
+        class FakeBatch:
+            def __init__(self, array):
+                self.image = FakeTensor(array)
+            def __getitem__(self, index): return self.image
+            def __iter__(self): return iter([self.image])
+        first = {
+            "version": 1, "tags": ["eyes-closed"], "controls": {}, "prompts": {},
+            "origin": {"metadata": {"prompt": {"nodes": ["original"]}},
+                       "seeds": [{"value": "101"}]},
+            "history": [{"stage": "eye-detailer", "actual_prompt": "No visible iris"}],
+        }
+        with mock.patch.dict(sys.modules, {"folder_paths": fake}):
+            pack = nodes()
+            saver = pack.NODE_CLASS_MAPPINGS["ImageUtilsSaveImageWithSidecar"]()
+            result = saver.save_images(
+                FakeBatch(np.ones((4, 4, 3), dtype=np.float32) * .4),
+                json.dumps(first), filename_prefix="detailer",
+                prompt={"3": {"class_type": "KSampler"}},
+                extra_pnginfo={"workflow": {"nodes": ["detailer"]}},
+            )
+        item = result["ui"]["images"][0]
+        image = self.dir / item["filename"]
+        sidecar = image.with_suffix(".sidecar")
+        self.assertTrue(image.exists())
+        self.assertTrue(sidecar.exists())
+        with Image.open(image) as raw:
+            self.assertEqual(json.loads(raw.info["prompt"])["3"]["class_type"], "KSampler")
+            self.assertEqual(json.loads(raw.info["workflow"])["nodes"], ["detailer"])
+            embedded = json.loads(raw.info["krea_sidecar"])
+        disk = json.loads(sidecar.read_text())
+        self.assertEqual(embedded, disk)
+        self.assertEqual(embedded["origin"], first["origin"])
+        self.assertEqual(embedded["history"][0], first["history"][0])
+        self.assertEqual(embedded["history"][-1]["stage"], "image-save")
+        self.assertEqual(embedded["history"][-1]["workflow"], {"nodes": ["detailer"]})
+        self.assertEqual(self.api.read_sidecar(image)[0]["history"], disk["history"])
+        sidecar.unlink()
+        self.assertEqual(self.api.read_sidecar(image)[0]["origin"], first["origin"])
+
 
 
 if __name__=="__main__":
