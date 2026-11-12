@@ -82,6 +82,91 @@ All outputs have stable types, regardless of what each image's JSON contains. Mi
 
 The outputs can be connected to existing compatible rgthree, KJNodes, and detailer controls. ComfyUI's usual widget-to-input conversion may be necessary for some external nodes.
 
+## Lifetime provenance and embedded backup (new)
+
+A sidecar is a **persistent lifetime record**, not just a temporary prompt
+override. The original generation metadata is captured by Image-Compare on the
+first cull/export and stored under `origin`, including saved ComfyUI execution
+graph, workflow, seed input values, and prompt inputs where available. Some
+dynamic prompt nodes only save their inputs rather than the final expanded text;
+the record makes this distinction clear rather than inventing a resolved prompt.
+
+Two additional nodes make the record follow processed images:
+
+**Image Utils · Append Processing Event** takes `sidecar_json` from Image
+Sidecar Loader, the *actual prompt text* used in a detailer, a stage label
+(e.g. `eye-detailer`), optional settings JSON, input filename and seed. It
+appends an entry to `history` and passes the complete sidecar JSON onward
+without replacing `origin`.
+
+**Image Utils · Save Image + Sidecar (Embedded)** takes the processed IMAGE
+and updated `sidecar_json` and saves both the new PNG and its JSON `.sidecar`.
+It ALSO embeds a compressed PNG iTXt backup with key `krea_sidecar`, and
+preserves ComfyUI's usual `prompt` and `workflow` PNG metadata. It can
+optionally archive the current execution graph and UI workflow in the
+`image-save` history entry (enabled by default). Select it as your Save Image
+node for this stage.
+
+For example:
+
+```text
+Sequential Image Loader IMAGE ────────────────> detailer ──────> Save Image + Sidecar (Embedded)
+                     file_path                   ▲                      ▲
+                         │                       │                      │
+                         ▼                       │                      │
+                 Image Sidecar Loader            │                      │
+                         │ json                  │                      │
+                         ├────> Tag Checker ────> Prompt Selector       │
+                         │                              │               │
+                         │                         actual prompt        │
+                         │                              │               │
+                         └──────> Append Processing Event <─────────────┘
+                                  stage=eye-detailer
+                                  settings_json={"denoise":0.2}
+```
+
+(The selected prompt connects to your text encoder **and** Append Processing
+Event. The output from Append Processing Event connects to the Save node's
+`sidecar_json` input.)
+
+If the external sidecar goes missing, **Image Sidecar Loader automatically
+recovers the embedded `krea_sidecar`** from the PNG. An external sidecar takes
+precedence when present because it may contain later edits. Image-Compare also
+uses the same precedence and has a **Provenance** viewer and explicit **Restore
+Sidecar** action.
+
+Sample lifetime record:
+
+```json
+{
+  "version": 1,
+  "tags": ["eyes-closed"],
+  "controls": {},
+  "prompts": {},
+  "origin": {
+    "source_filename": "original.png",
+    "seeds": [{"value": "12345"}],
+    "metadata": {"workflow": {"nodes": ["original-generation"]}}
+  },
+  "history": [
+    {"stage": "select-sort", "timestamp": "2026-11-12T12:00:00+00:00"},
+    {
+      "stage": "eye-detailer",
+      "timestamp": "2026-11-12T12:10:00+00:00",
+      "actual_prompt": "Naturally closed eyelids, no iris",
+      "settings": {"denoise": 0.2}
+    },
+    {"stage": "image-save", "output_filename": "detailer_00001_.png"}
+  ]
+}
+```
+
+**Save is currently PNG-only** for embedded backups. Images and external
+sidecars are saved together; the PNG itself also contains the recovery copy.
+Removing both the PNG metadata and the external sidecar is irreversible.
+The existing nodes remain read-only; only Save Image + Sidecar writes new
+output images. This node doesn't modify input images.
+
 ## Operational notes
 
 - The reader looks for files on the **ComfyUI backend's filesystem**. If ComfyUI runs on a GPU pod, you must copy the images and matching sidecars to that pod.
