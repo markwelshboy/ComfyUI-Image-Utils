@@ -181,6 +181,22 @@ class SidecarTests(unittest.TestCase):
         external.unlink()
         self.assertEqual(self.api.read_sidecar(path)[0]["tags"], ["eyes-closed"])
 
+    def test_embedded_backup_larger_than_pillow_default_text_limit(self):
+        from PIL import Image, PngImagePlugin
+        large = {
+            "version": 1, "tags": [], "controls": {}, "prompts": {},
+            "origin": {"metadata": {"prompt": {"long_text": "A" * 1_300_000}}},
+            "history": [],
+        }
+        path = self.dir / "large generated.png"
+        meta = PngImagePlugin.PngInfo()
+        meta.add_itxt("krea_sidecar", json.dumps(large), zip=True)
+        Image.new("RGB", (2, 2)).save(path, pnginfo=meta)
+        recovered, found, sidecar_path = self.api.read_sidecar(path)
+        self.assertTrue(found)
+        self.assertEqual(recovered["origin"], large["origin"])
+        self.assertFalse(Path(sidecar_path).exists())
+
     def test_save_image_with_sidecar_and_embedded_backup(self):
         # Minimal folder_paths stub, using real numpy/Pillow to verify PNG text
         # and sidecar output. Does not need PyTorch/ComfyUI at test time.
