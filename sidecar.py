@@ -52,25 +52,63 @@ def validate_document(data):
 
 
 def decode_embedded_record(image_path):
-    """Recover krea_sidecar iTXt metadata from a PNG (using ComfyUI's Pillow)."""
+    """Recover krea_sidecar from PNG iTXt without Pillow's 1 MiB text limit.
+
+    Verifies CRC for our metadata and bounds inflated text to 16 MiB.
+    Large IDAT image-data chunks are skipped using seek, never decoded.
+    """
+    import struct
+    import zlib
     image = Path(image_path)
     if image.suffix.lower() != ".png" or not image.is_file():
         return None
-    # Only attempt decoding actual PNG signature; other files can have a .png
-    # suffix without containing a valid PNG, especially in metadata tests.
-    with image.open("rb") as source:
-        if source.read(8) != b"\x89PNG\r\n\x1a\n":
+    with image.open("rb") as stream:
+        if stream.read(8) != b"\x89PNG\r\n\x1a\n":
             return None
-    from PIL import Image
-    with Image.open(image) as opened:
-        content = opened.info.get("krea_sidecar")
-    if content is None:
-        return None
-    if not isinstance(content, str):
-        raise ValueError("Embedded krea_sidecar is not text: " + str(image))
-    if len(content.encode("utf-8")) > MAX_SIDECAR_BYTES:
-        raise ValueError("Embedded krea_sidecar is too large: " + str(image))
-    return validate_document(load_document(content))
+        for _ in range(100000):
+            head = stream.read(8)
+            if len(head) != 8:
+                return None
+            length, kind = struct.unpack(">I4s", head)
+            if kind == b"IEND":
+                return None
+            if kind != b"iTXt" or length > MAX_SIDECAR_BYTES + 8192:
+                stream.seek(length + 4, 1)
+                continue
+            body = stream.read(length)
+            checksum = stream.read(4)
+            if len(body) != length or len(checksum) != 4:
+                raise ValueError("Truncated PNG iTXt metadata: " + str(image))
+            label, sep, remainder = body.partition(b"\0")
+            if label != b"krea_sidecar" or sep != b"\0":
+                continue
+            if (zlib.crc32(kind + body) & 0xffffffff) != struct.unpack(">I", checksum)[0]:
+                raise ValueError("Corrupt embedded sidecar checksum: " + str(image))
+            if len(remainder) < 2:
+                raise ValueError("Invalid embedded sidecar iTXt header: " + str(image))
+            compression, method = remainder[0], remainder[1]
+            _language, sep, remaining = remainder[2:].partition(b"\0")
+            if not sep:
+                raise ValueError("Invalid embedded sidecar language field")
+            _translated, sep, payload = remaining.partition(b"\0")
+            if not sep or method != 0 or compression not in (0, 1):
+                raise ValueError("Invalid embedded sidecar compression header")
+            if compression:
+                decoder = zlib.decompressobj()
+                raw = decoder.decompress(payload, MAX_SIDECAR_BYTES + 1)
+                if (len(raw) > MAX_SIDECAR_BYTES or decoder.unconsumed_tail
+                        or not decoder.eof):
+                    raise ValueError("Embedded sidecar is oversized or incomplete")
+            else:
+                raw = payload
+                if len(raw) > MAX_SIDECAR_BYTES:
+                    raise ValueError("Embedded sidecar is oversized")
+            try:
+                document = json.loads(raw.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError) as error:
+                raise ValueError("Malformed embedded sidecar JSON: " + str(image)) from error
+            return validate_document(document)
+    return None
 
 
 def read_sidecar(image_path):
