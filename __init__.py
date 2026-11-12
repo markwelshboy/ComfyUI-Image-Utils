@@ -88,8 +88,8 @@ class ImageUtilsConditionalPrompt:
     @classmethod
     def INPUT_TYPES(cls):
         return {"required": {
-            "default_prompt": ("STRING", {"default": "detailed iris, natural eyes",
-                                           "multiline": True, "forceInput": False}),
+            "default_prompt": ("STRING", {"forceInput": True,
+                                           "tooltip": "Connect your existing default text prompt."}),
             "override_prompt": ("STRING", {"default": "Closed eyelids, natural lashes, no iris",
                                             "multiline": True}),
             "condition": ("BOOLEAN", {"forceInput": True}),
