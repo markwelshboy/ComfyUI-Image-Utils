@@ -1,5 +1,7 @@
 # ComfyUI Image Utils
 
+PNG provenance backup: `image_sidecar` iTXt (legacy `krea_sidecar` reads remain supported).
+
 Generic sidecar-driven ComfyUI utility nodes. Works directly with the full **file_path** STRING output of the [shootthesound Sequential Image Loader](https://github.com/shootthesound/ComfyUI-SequentialImageLoader); no change to that node is required.
 
 ## Install
@@ -101,7 +103,7 @@ without replacing `origin`.
 
 **Image Utils · Save Image + Sidecar (Embedded)** takes the processed IMAGE
 and updated `sidecar_json` and saves both the new PNG and its JSON `.sidecar`.
-It ALSO embeds a compressed PNG iTXt backup with key `krea_sidecar`, and
+It ALSO embeds a compressed PNG iTXt backup with key `image_sidecar`, and
 preserves ComfyUI's usual `prompt` and `workflow` PNG metadata. It can
 optionally archive the current execution graph and UI workflow in the
 `image-save` history entry (enabled by default). Select it as your Save Image
@@ -130,7 +132,7 @@ Event. The output from Append Processing Event connects to the Save node's
 `sidecar_json` input.)
 
 If the external sidecar goes missing, **Image Sidecar Loader automatically
-recovers the embedded `krea_sidecar`** from the PNG. An external sidecar takes
+recovers the embedded `image_sidecar`** from the PNG. An external sidecar takes
 precedence when present because it may contain later edits. Image-Compare also
 uses the same precedence and has a **Provenance** viewer and explicit **Restore
 Sidecar** action.
