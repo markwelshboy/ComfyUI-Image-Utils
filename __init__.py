@@ -238,6 +238,147 @@ class ImageUtilsSaveImageWithSidecar:
             counter += 1
         return {"ui": {"images": results}}
 
+
+class ImageUtilsLazyImageBypass:
+    """Skip an expensive detailer branch when bypass is True.
+
+    Crucially BOTH image inputs are lazy: ComfyUI only requests the selected
+    image branch. Unlike a regular switch, the unselected branch does not
+    need to execute unless some other output node independently requests it.
+    """
+    CATEGORY = CATEGORY
+    FUNCTION = "route"
+    RETURN_TYPES = ("IMAGE", "BOOLEAN")
+    RETURN_NAMES = ("image", "bypassed")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "bypass": ("BOOLEAN", {"forceInput": True}),
+            "passthrough_image": ("IMAGE", {"lazy": True}),
+            "processed_image": ("IMAGE", {"lazy": True}),
+        }}
+
+    def check_lazy_status(self, bypass, passthrough_image=None, processed_image=None):
+        if bypass:
+            return ["passthrough_image"] if passthrough_image is None else []
+        return ["processed_image"] if processed_image is None else []
+
+    def route(self, bypass, passthrough_image=None, processed_image=None):
+        image = passthrough_image if bypass else processed_image
+        if image is None:
+            raise ValueError(
+                "Lazy Image Bypass did not receive the selected IMAGE branch. "
+                "Check that the corresponding Get/Set or physical link is connected."
+            )
+        return image, bool(bypass)
+
+
+class ImageUtilsTagPromptSelector:
+    """Choose a single prompt based on tags, with explicit precedence and diagnostics."""
+    CATEGORY = CATEGORY
+    FUNCTION = "select"
+    RETURN_TYPES = ("STRING", "STRING", "BOOLEAN", "INT")
+    RETURN_NAMES = ("selected_prompt", "matched_tag", "used_default", "matched_count")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "sidecar_json": ("STRING", {"forceInput": True}),
+            "default_prompt": ("STRING", {"default": "", "multiline": True}),
+            "mapping_json": ("STRING", {
+                "default": (
+                    '{\n'
+                    '  "eyes-closed": "Natural closed eyelids, detailed eyelashes, no visible iris",\n'
+                    '  "eyes-half-closed": "Natural half-closed eyelids, partial iris, delicate lashes",\n'
+                    '  "bright-green-eyes": "Bright green irises, detailed pupils, natural lashes"\n'
+                    '}'
+                ),
+                "multiline": True,
+            }),
+            "priority_csv": ("STRING", {
+                "default": "eyes-closed, eyes-half-closed, bright-green-eyes",
+                "tooltip": "First matching tag wins. Unlisted mapping keys follow JSON insertion order."
+            }),
+            "strict_single_match": ("BOOLEAN", {
+                "default": False,
+                "tooltip": "Raise an error instead of using priority when multiple mapped tags match."
+            }),
+        }}
+
+    def select(self, sidecar_json, default_prompt, mapping_json,
+               priority_csv="", strict_single_match=False):
+        from .routing import select_tag_prompt
+        return select_tag_prompt(sidecar_json, default_prompt, mapping_json,
+                                 priority_csv, strict_single_match)
+
+
+class ImageUtilsInlineImagePreview:
+    """Non-output IMAGE preview which runs only when its IMAGE output is consumed."""
+    CATEGORY = CATEGORY
+    FUNCTION = "preview"
+    OUTPUT_NODE = False
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "image": ("IMAGE",),
+            "enabled": ("BOOLEAN", {"default": True}),
+            "max_preview_edge": ("INT", {"default": 1024, "min": 128, "max": 4096, "step": 64}),
+            "batch_frames": ("INT", {"default": 1, "min": 1, "max": 8}),
+        }}
+
+    def preview(self, image, enabled=True, max_preview_edge=1024, batch_frames=1):
+        if not enabled:
+            return {"ui": {"images": []}, "result": (image,)}
+        from .preview import save_inline_previews
+        images = save_inline_previews(
+            [("image", image, False)], max_preview_edge, batch_frames)
+        return {"ui": {"images": images}, "result": (image,)}
+
+
+class ImageUtilsInlineCropPreview:
+    """Inline crop/mask debug preview, passing the main IMAGE through unchanged.
+
+    The main image should be the *processed* detailer output, not its incoming
+    original IMAGE, so that preview work stays inside the lazy detailer branch.
+    """
+    CATEGORY = CATEGORY
+    FUNCTION = "preview"
+    OUTPUT_NODE = False
+    RETURN_TYPES = ("IMAGE",)
+    RETURN_NAMES = ("image",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "image": ("IMAGE",),
+            "enabled": ("BOOLEAN", {"default": True}),
+            "max_preview_edge": ("INT", {"default": 1024, "min": 128, "max": 4096, "step": 64}),
+            "batch_frames": ("INT", {"default": 1, "min": 1, "max": 8}),
+        }, "optional": {
+            "crop_image": ("IMAGE",),
+            "crop_mask": ("MASK",),
+        }}
+
+    def preview(self, image, enabled=True, max_preview_edge=1024, batch_frames=1,
+                crop_image=None, crop_mask=None):
+        if not enabled:
+            return {"ui": {"images": []}, "result": (image,)}
+        from .preview import save_inline_previews
+        previews = []
+        if crop_image is not None:
+            previews.append(("crop", crop_image, False))
+        if crop_mask is not None:
+            previews.append(("mask", crop_mask, True))
+        if not previews:
+            previews.append(("image", image, False))
+        images = save_inline_previews(previews, max_preview_edge, batch_frames)
+        return {"ui": {"images": images}, "result": (image,)}
+
+
 NODE_CLASS_MAPPINGS = {
     "ImageUtilsSidecarLoader": ImageUtilsSidecarLoader,
     "ImageUtilsJsonFieldExtractor": ImageUtilsJsonFieldExtractor,
@@ -245,6 +386,10 @@ NODE_CLASS_MAPPINGS = {
     "ImageUtilsConditionalPrompt": ImageUtilsConditionalPrompt,
     "ImageUtilsAppendProcessingEvent": ImageUtilsAppendProcessingEvent,
     "ImageUtilsSaveImageWithSidecar": ImageUtilsSaveImageWithSidecar,
+    "ImageUtilsLazyImageBypass": ImageUtilsLazyImageBypass,
+    "ImageUtilsTagPromptSelector": ImageUtilsTagPromptSelector,
+    "ImageUtilsInlineImagePreview": ImageUtilsInlineImagePreview,
+    "ImageUtilsInlineCropPreview": ImageUtilsInlineCropPreview,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageUtilsSidecarLoader": "Image Utils · Image Sidecar Loader",
@@ -253,4 +398,8 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageUtilsConditionalPrompt": "Image Utils · Conditional Prompt",
     "ImageUtilsAppendProcessingEvent": "Image Utils · Append Processing Event",
     "ImageUtilsSaveImageWithSidecar": "Image Utils · Save Image + Sidecar (Embedded)",
+    "ImageUtilsLazyImageBypass": "Image Utils · Lazy Image Bypass",
+    "ImageUtilsTagPromptSelector": "Image Utils · Tag Prompt Selector",
+    "ImageUtilsInlineImagePreview": "Image Utils · Inline Image Preview",
+    "ImageUtilsInlineCropPreview": "Image Utils · Inline Crop Preview",
 }
