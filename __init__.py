@@ -403,3 +403,23 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageUtilsInlineImagePreview": "Image Utils · Inline Image Preview",
     "ImageUtilsInlineCropPreview": "Image Utils · Inline Crop Preview",
 }
+
+
+# Optional LoneCat-compatible MR nodes. Upstream classes are resolved after
+# ComfyUI finishes loading its custom-node registry, never at import time.
+from .mr_lazy_lc import MRLazySmartDetailerPipe, MRLazyCharacterDetailerPipe
+from .mr_diagnostics import MRInlineVRAMClear, MRConditionalPreviewSink
+
+NODE_CLASS_MAPPINGS.update({
+    "ImageUtilsMRLazySmartDetailerPipe": MRLazySmartDetailerPipe,
+    "ImageUtilsMRLazyCharacterDetailerPipe": MRLazyCharacterDetailerPipe,
+    "ImageUtilsMRInlineVRAMClear": MRInlineVRAMClear,
+    "ImageUtilsMRConditionalPreviewSink": MRConditionalPreviewSink,
+})
+NODE_DISPLAY_NAME_MAPPINGS.update({
+    "ImageUtilsMRLazySmartDetailerPipe": "MR Lazy Smart Detailer (pipe)",
+    "ImageUtilsMRLazyCharacterDetailerPipe": "MR Lazy Character Detailer (pipe)",
+    "ImageUtilsMRInlineVRAMClear": "MR VRAM Cache Clear (Inline)",
+    "ImageUtilsMRConditionalPreviewSink": "MR Conditional Preview Sink",
+})
+WEB_DIRECTORY = "./web"
