@@ -289,3 +289,106 @@ output images. This node doesn't modify input images.
 - The reader's IS_CHANGED hook checks file content, so edited sidecars invalidate the cached node output.
 - The loader, extractors, routing, and inline previews do not modify input images or sidecars.
 - A configurable **Add Output** node with dynamically typed sockets can be developed later. It requires synchronized Python/backend and JavaScript/frontend socket definitions to behave reliably with differing images.
+
+
+## MR lazy LoneCat pipe detailers (experimental)
+
+This is an **additive** integration with
+[lonecatone23/ComfyUI_LC_MaskMaker_nodes](https://github.com/lonecatone23/ComfyUI_LC_MaskMaker_nodes).
+It does **not** edit, unregister, monkeypatch, or replace the original LoneCat
+detailers. Existing workflows using the original node IDs remain unchanged.
+
+Four additional nodes are available under **Image Utils / MR Lazy Detailers**:
+
+| Node | Purpose |
+| --- | --- |
+| **MR Lazy Smart Detailer (pipe)** | Runs the installed LC Smart Detailer (pipe) without being an independent OUTPUT_NODE |
+| **MR Lazy Character Detailer (pipe)** | Equivalent adapter for LC Character Detailer (pipe) |
+| **MR VRAM Cache Clear (Inline)** | Passes any value through unchanged; clears caches **only if requested by downstream** |
+| **MR Conditional Preview Sink** | Conditional multi-input IMAGE/MASK previews plus on-node SKIPPED/SELECTED lamp |
+
+### Wiring with KJ Lazy Switch
+
+For a stage controlled by a `no-face` tag:
+
+```text
+Get LC_PIPE from previous stage ───────────────┐
+           │                                   │
+           ▼                                   ▼
+ MR Lazy Smart Detailer (pipe)               on_true
+           │
+           ├─ IMAGE ───────> MR Conditional Preview Sink.image_1
+           ├─ MASK ────────> MR Conditional Preview Sink.mask_1
+           │
+           ▼
+ MR VRAM Cache Clear (Inline)  [optional]
+           │
+           ▼
+       on_false
+           ├──────────► Lazy Switch KJ ──────► next LC pipe detailer
+ JSON Tag Checker(has_tag: no-face) ── switch
+           └──────────► MR Conditional Preview Sink.bypass
+```
+
+**KJ Lazy Switch:**
+- `switch=true` / tag `no-face`: `on_true` (the original input LC_PIPE).
+- `switch=false`: `on_false` (the processed output LC_PIPE).
+
+**MR Conditional Preview Sink:**
+- `bypass` must be connected to the **same** tag Boolean as the KJ switch.
+- Optional lazy inputs: `image_1`, `image_2`, `mask_1`, `mask_2`.
+- `bypass=true` requests **none** of the image/mask previews, reports SKIPPED.
+- `bypass=false` requests only the **connected** preview inputs, then reports
+  SELECTED and displays their resized temp PNGs.
+- The preview UI status light indicates **selected vs skipped**; a selected
+  detailer might have used ComfyUI cache rather than rerunning diffusion.
+  It does not claim that a model was freshly executed.
+- The sink is intentionally `OUTPUT_NODE=True` so that SKIPPED can be shown
+  for every queued image. Its preview inputs are lazy, so this does not force
+  the bypassed detailer branch. It is an independent **conditional** output.
+
+The MR pipe detailers are **non-output nodes**, even though the LoneCat
+originals are independent outputs. The MR adapters delegate the entire
+execution to the actual installed LoneCat Python classes at runtime; they
+retain its LC_PIPE updated image, protect mask, SAM3 hits, IMAGE/MASK outputs,
+and internal preview UI. The adapters add an `images` UI alias for the
+processed result to support the stock ComfyUI preview renderer.
+
+**Important: avoid any independent output roots inside the lazy branch.**
+LoneCat's existing **LC Preview Image**, **LC Preview Mask**, and **LC VRAM
+Cache Clear** are marked `OUTPUT_NODE=True`. A standalone node of those types
+connected to an MR detailer result can still force the detailer to execute,
+regardless of the KJ switch. Replace with **MR Conditional Preview Sink**
+for mask/image preview and **MR VRAM Cache Clear (Inline)** for cleanup.
+The older Image-Utils inline preview nodes are also safe, provided their
+passthrough IMAGE is consumed by the selected branch.
+
+**Load order and safety:** Image-Utils does not import LoneCat at package
+import time. The adapters resolve the original ComfyUI node IDs when their
+schema is requested and on execution. If LoneCat is missing, no other Image
+Utils node is affected and the MR adapter raises an actionable error if used.
+The adapter validates that upstream still exposes `LC_PIPE, IMAGE, MASK` and
+an LC_PIPE input, and uses an upstream class instance for its normal detail
+logic. If a LoneCat update changes the interface, update the adapter.
+
+**Testing:** Unit tests mock LoneCat and exercise schema resolution,
+pipe-result preservation, skip/active lazy input requests, preview writes,
+and inline VRAM pass-through. GPU execution and the actual classic/Nodes 2.0
+frontend still require verification on your ComfyUI instance.
+
+### Suggested smoke test
+
+1. Upgrade both Image-Utils and LoneCat, restart ComfyUI.
+2. Add an **MR Lazy Smart Detailer (pipe)** and a **KJ Lazy Switch** with the
+   incoming pipe wired to `on_true`, MR processed pipe to `on_false`.
+3. Wire `no-face` into both `switch` and **MR Conditional Preview Sink.bypass**.
+4. Wire MR detailer IMAGE and MASK outputs into the preview sink's image/mask
+   inputs. Use MR inline VRAM-clear if desired.
+5. Queue an image with `no-face`. Check the sink is SKIPPED, the MR
+   detailer does not run, and the original LC pipe reaches the next stage.
+6. Queue one without `no-face`. Check the detailer runs (or is cached)
+   and the pipe image/protect masks reach the next stage.
+
+If an MR detailer still runs on a bypassed image, look for extra output roots
+connected to that branch, including LC Preview Mask and older VRAM-clear
+nodes.
