@@ -136,7 +136,7 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual(item["type"], "temp")
         with Image.open(self.path / item["filename"]) as image:
             self.assertEqual(image.size, (5, 4))
-        np.testing.assert_array_equal(batch.array, np.full((2, 4, 5, 3), .6))
+        np.testing.assert_array_equal(batch.array, np.full((2, 4, 5, 3), .6, dtype=np.float32))
         result_disabled = node.preview(batch, enabled=False)
         self.assertEqual(result_disabled, {"ui": {"images": []}, "result": (batch,)})
         self.assertEqual(len(list(self.path.glob("*.png"))), 1)
