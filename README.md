@@ -388,6 +388,46 @@ illustrative: **Last save** displays the actual resolved path returned by
 the backend after execution. As with other ComfyUI DOM widgets, a frontend
 restart/refresh may be needed after upgrading the extension.
 
+### Compact saver panel with permanent image preview
+
+**Image Utils · Save Image + Sidecar (Embedded)** now uses a compact
+Pixaroma-style frontend. The native IMAGE / sidecar / protection / prompt
+input **sockets** and all Python-side parameters are unchanged.
+
+- **▾ Settings** expands or collapses the output/name/processing controls
+  within a scrollable panel. It starts collapsed. Normal filename-prefix,
+  template, directory, source filename, stage, tracking ID, counters and
+  collision mode are available as editable fields, with token buttons and
+  an estimated save-name preview.
+- **PROVENANCE / ADVANCED** contains model, seed, optional negative
+  prompt, generation settings JSON and workflow-history toggle. You do
+  not need to scroll past these controls on every generation.
+- An **always-visible preview area** below the toolbar shows the most recent
+  saved image. Click the preview for a larger view. If a batch is saved,
+  use the small previous/next controls below the preview.
+- **⚙** opens a separate preferences dialog for preview height and
+  whether settings are expanded. Preferences are kept in the node's
+  workflow properties (not in the image sidecar), so they survive saving
+  and reopening the workflow without creating extra input widgets.
+- After execution, the node shows the actual saved filename/path. Before
+  execution, the filename estimate may differ if a connected input,
+  sidecar tracking ID or collision revision changes the result.
+
+For images in ComfyUI's normal output folder, the preview uses the standard
+`/view` endpoint. For explicitly allowed external output folders, the
+backend attempts to generate a bounded 1024-pixel thumbnail in ComfyUI's
+temporary folder, without modifying the original output image. If this
+optional thumbnail cannot be created, the actual file is still saved and
+the UI displays a clear preview-unavailable message.
+
+**Workflow compatibility:** The custom HTML controls are a frontend
+facade over the **existing original widgets**, which remain in the node
+and retain their exact order, names, values, connected inputs and
+serialization. The long native controls are visually hidden, not removed.
+The custom preview is non-serializable and only presentation settings are
+added to the existing node's properties. The existing name-keyed snapshot
+and migration warning/repair functionality remain active.
+
 ### Text-area labels and safe workflow widget migration
 
 The saver has two multiline fields that ComfyUI ordinarily renders without
