@@ -364,6 +364,8 @@ class ImageUtilsSaveImageWithSidecar:
             template = filename_template.strip() or "%input_name%_%counter%"
             subfolder = (folder.relative_to(Path(self.output_dir).resolve()).as_posix()
                          if folder.is_relative_to(Path(self.output_dir).resolve()) else "")
+            if subfolder == ".":
+                subfolder = ""
             legacy_name = None
             legacy_counter = None
         else:
