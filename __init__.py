@@ -372,7 +372,7 @@ class ImageUtilsSaveImageWithSidecar:
             folder = Path(folder)
             folder.mkdir(parents=True, exist_ok=True)
 
-        results, filenames = [], []
+        results, filenames, preview_items = [], [], []
         # Torch IMAGE batches expose shape[0]. Test/legacy iterable wrappers
         # may expose only iteration, so keep those older callers working.
         count = int(images.shape[0]) if hasattr(images, "shape") else sum(1 for _ in images)
@@ -472,10 +472,25 @@ class ImageUtilsSaveImageWithSidecar:
                 for temporary, _ in staged:
                     temporary.unlink(missing_ok=True)
 
-            if Path(folder).is_relative_to(Path(self.output_dir).resolve()):
+            # Only files under ComfyUI's served output tree can be opened
+            # through its /view endpoint. The UI must never infer that an
+            # arbitrary absolute save path is browser-accessible.
+            preview_available = Path(folder).is_relative_to(
+                Path(self.output_dir).resolve())
+            if preview_available:
                 results.append({"filename": file, "subfolder": subfolder, "type": "output"})
+            preview_items.append({
+                "filename": file, "subfolder": subfolder if preview_available else "",
+                "type": "output" if preview_available else "",
+                "preview_available": preview_available,
+                "display_path": str(target),
+            })
             filenames.append(str(target))
-        return {"ui": {"images": results, "mr_saved_paths": filenames}}
+        return {"ui": {
+            "images": results,
+            "mr_saved_paths": filenames,
+            "mr_saved_previews": preview_items,
+        }}
 
 
 class ImageUtilsLazyImageBypass:
