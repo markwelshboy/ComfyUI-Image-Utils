@@ -168,7 +168,7 @@ class SmartSaverTests(unittest.TestCase):
         doc = json.loads(path.with_suffix(".sidecar").read_text())
         self.assertEqual(doc["prompts"]["generation"]["positive"], "Prompt from Krea")
         self.assertEqual(doc["origin"]["generation"]["seed"], 4343)
-        self.assertEqual(doc["origin"]["tracking_id"], "0000")
+        self.assertEqual(doc["origin"]["tracking_id"], "0087")
         self.assertEqual(doc["origin"]["generation"]["settings"], {"denoise": 0.7})
 
     def test_output_directory_safe_paths_and_subfolders(self):
