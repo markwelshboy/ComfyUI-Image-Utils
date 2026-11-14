@@ -92,6 +92,7 @@ function saverApplyRepair(node) {
     widget.callback?.(widget.value);
   }
   node.__mrSmartSaveLegacy = false;
+  node.__mrSmartSaveNeedsReview = false;
   node.__mrSmartSaveReviewNote = "Advanced fields reset. Check the output directory, " +
     "stage and tracking ID before queuing; save the workflow to store values by name.";
   node.__mrSmartSaveRefresh?.();
@@ -253,9 +254,13 @@ app.registerExtension({
           saverApplyRepair(this);
         });
         root.append(header,buttons,label,preview,last,help,warning,repair);
-        this.addDOMWidget("mr_filename_preview","MR_FILENAME_PREVIEW",root,{
+        const helper=this.addDOMWidget("mr_filename_preview","MR_FILENAME_PREVIEW",root,{
           serialize:false,getMinHeight:()=>190,getMaxHeight:()=>280
         });
+        // DOM widget options.serialize=false alone is insufficient in older
+        // LiteGraph builds. Explicitly keep the helper out of widgets_values,
+        // preventing another source of positional widget shifts.
+        if(helper)helper.serialize=false;
         this.__mrSmartSaveRefresh = () => {
           const updated = templatePreview(this);
           if(preview.textContent !== updated) preview.textContent=updated;
