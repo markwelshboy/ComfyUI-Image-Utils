@@ -6,7 +6,7 @@ export const UI_SETTINGS_KEY = "mr_saver_ui";
 const DEFAULT_PREFS={previewHeight:340,settingsOpen:false};
 const CSS=[
 ".mr-saver{display:flex;flex-direction:column;gap:9px;color:#dbe7ed;background:#162027;border:1px solid #455765;border-radius:8px;padding:10px;font:12px system-ui,sans-serif;box-sizing:border-box;width:100%}",
-".mr-saver *{box-sizing:border-box}",
+".mr-saver *{box-sizing:border-box}.mr-saver [hidden]{display:none!important}",
 ".mr-saver button{border:1px solid #455e6e;background:#2d3e49;color:#ecf2f6;border-radius:5px;padding:5px 8px;cursor:pointer;font:11px system-ui,sans-serif}",
 ".mr-saver button:hover{background:#405866}.mr-saver button:disabled{opacity:.5;cursor:not-allowed}",
 ".mr-saver .toolbar{display:flex;align-items:center;gap:6px}.mr-saver .grow{flex:1}",
