@@ -170,6 +170,34 @@ class SmartSaverTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "immutable"):
             self.save(original, source_name="curated_set_0087.png", tracking_id="0087")
 
+    def test_prefix_token_uses_filename_prefix_for_generation_names(self):
+        options = {"source_name": "", "filename_prefix": "image_gen_2k",
+                   "filename_template": "%prefix%_%counter%",
+                   "output_directory": "trial2k", "stage": "generation"}
+        a = Path(self.save(None, **options)["ui"]["mr_saved_paths"][0])
+        b = Path(self.save(None, **options)["ui"]["mr_saved_paths"][0])
+        self.assertEqual(a.name, "image_gen_2k_0000.png")
+        self.assertEqual(b.name, "image_gen_2k_0001.png")
+        self.assertEqual(a.parent, self.output / "trial2k")
+        self.assertTrue(a.with_suffix(".sidecar").is_file())
+        with Image.open(a) as img:
+            embedded = json.loads(img.info["image_sidecar"])
+        self.assertEqual(json.loads(a.with_suffix(".sidecar").read_text()), embedded)
+
+    def test_custom_templates_without_prefix_token_remain_unchanged(self):
+        original = self.init()
+        filename = Path(self.save(original, filename_prefix="image_gen_2k",
+                       filename_template="%input_name%_%tracked_count%")
+                        ["ui"]["mr_saved_paths"][0]).name
+        self.assertEqual(filename, "culled_for_detailing_0087_0087.png")
+
+    def test_prefix_token_accepts_subdirectory_prefix_as_basename(self):
+        from image_utils_smart_save_tests.save_naming import expand_filename
+        self.assertEqual(expand_filename("%prefix%_%counter%", prefix="foo/bar",
+                         counter=7), "bar_0007.png")
+        with self.assertRaisesRegex(ValueError, "paths or unsafe"):
+            expand_filename("%prefix%_%counter%", prefix="name:bad", counter=7)
+
     def test_source_without_counter_uses_sequential_ids(self):
         opts = {"source_name": "untagged.png",
                 "filename_template": "%input_name%_%tracked_count%"}
