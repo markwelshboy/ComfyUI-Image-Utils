@@ -409,17 +409,20 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 # ComfyUI finishes loading its custom-node registry, never at import time.
 from .mr_lazy_lc import MRLazySmartDetailerPipe, MRLazyCharacterDetailerPipe
 from .mr_diagnostics import MRInlineVRAMClear, MRConditionalPreviewSink
+from .mr_pipe_image_replace import MRPipeImageReplaceProtect
 
 NODE_CLASS_MAPPINGS.update({
     "ImageUtilsMRLazySmartDetailerPipe": MRLazySmartDetailerPipe,
     "ImageUtilsMRLazyCharacterDetailerPipe": MRLazyCharacterDetailerPipe,
     "ImageUtilsMRInlineVRAMClear": MRInlineVRAMClear,
     "ImageUtilsMRConditionalPreviewSink": MRConditionalPreviewSink,
+    "ImageUtilsMRPipeImageReplaceProtect": MRPipeImageReplaceProtect,
 })
 NODE_DISPLAY_NAME_MAPPINGS.update({
     "ImageUtilsMRLazySmartDetailerPipe": "MR Lazy Smart Detailer (pipe)",
     "ImageUtilsMRLazyCharacterDetailerPipe": "MR Lazy Character Detailer (pipe)",
     "ImageUtilsMRInlineVRAMClear": "MR VRAM Cache Clear (Inline)",
     "ImageUtilsMRConditionalPreviewSink": "MR Conditional Preview Sink",
+    "ImageUtilsMRPipeImageReplaceProtect": "MR Pipe Image Replace (Preserve Protection)",
 })
 WEB_DIRECTORY = "./web"
