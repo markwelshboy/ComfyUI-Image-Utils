@@ -17,4 +17,4 @@ jobs:
       - name: Python tests
         run: python -m unittest discover -s tests -v
       - name: Python syntax
-        run: python -m compileall -q sidecar.py routing.py preview.py mr_lazy_lc.py mr_diagnostics.py __init__.py
+        run: python -m compileall -q sidecar.py routing.py preview.py mr_lazy_lc.py mr_diagnostics.py mr_pipe_image_replace.py __init__.py
