@@ -17,7 +17,11 @@ jobs:
       - name: Python tests
         run: python -m unittest discover -s tests -v
       - name: Smart Save frontend syntax
-        run: node --check web/mr_smart_save.js
+        run: |
+          node --check web/mr_smart_save.js
+          node --check web/mr_smart_save_panel.js
+      - name: Compact saver UI regression
+        run: node tests/test_compact_saver_panel.cjs
       - name: Smart Save frontend filename prefix regression
         run: node tests/test_smart_save_ui.cjs
       - name: Smart Save widget serialization and label regression
