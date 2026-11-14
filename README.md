@@ -388,6 +388,47 @@ illustrative: **Last save** displays the actual resolved path returned by
 the backend after execution. As with other ComfyUI DOM widgets, a frontend
 restart/refresh may be needed after upgrading the extension.
 
+### Text-area labels and safe workflow widget migration
+
+The saver has two multiline fields that ComfyUI ordinarily renders without
+a heading. They are now visibly labeled **NEGATIVE PROMPT · optional**
+(the upper large text box, before `model_name`) and
+**GENERATION SETTINGS · JSON** (the lower box, after `model_name`).
+The original widget names and order do **not** change, so existing graph
+connections remain intact. You can leave the negative prompt blank and
+the settings field at `{}`. Both fields matter only when the saver
+initializes a new generation sidecar; an incoming `sidecar_json` takes
+precedence.
+
+Older ComfyUI versions can restore a workflow's `widgets_values`
+positionally instead of by input name. If a saver gained new fields
+between saves, its values might be shifted, e.g. `output_directory`
+accidentally showing `generation`, an empty `stage`,
+`counter_padding=0`, `counter_start=NaN`, or
+`collision_policy=-1`.
+
+For future saves, the saver now records a **name-keyed widget snapshot**
+in its existing node `properties`. On load it uses this named mapping
+(or ComfyUI's native `widgets_values_named` when available) to restore
+values regardless of widget position. The non-serializable filename
+preview is also explicitly excluded from positional saved widget lists.
+No extra input widgets are added.
+
+**Important limitation:** An already corrupted positional workflow
+may contain plausible-looking but incorrect values, especially
+`output_directory`, `stage` or `tracking_id`. The saver **will not
+guess** what your original settings were. If it detects invalid
+settings, an amber warning appears in the filename preview panel.
+Select **Reset misaligned advanced settings** to deliberately reset
+optional fields, keeping `filename_prefix`, `filename_template` and
+existing connections. Review your desired output directory, stage,
+tracking ID and counters before queueing, then save the workflow.
+The backend refuses invalid settings before writing any files.
+
+For an older workflow without obviously invalid values, the preview
+also reminds you to check the settings once; re-saving it records the
+named snapshot for future imports. A fresh node should load normally.
+
 ## Lifetime provenance and embedded backup (new)
 
 A sidecar is a **persistent lifetime record**, not just a temporary prompt
