@@ -19,4 +19,4 @@ jobs:
       - name: Smart Save frontend syntax
         run: node --check web/mr_smart_save.js
       - name: Python syntax
-        run: python -m compileall -q sidecar.py routing.py preview.py mr_lazy_lc.py mr_diagnostics.py mr_pipe_image_replace.py protection_mask.py mr_protection_restore.py save_naming.py __init__.py
+        run: python -m compileall -q sidecar.py routing.py preview.py mr_lazy_lc.py mr_diagnostics.py mr_pipe_image_replace.py protection_mask.py mr_protection_restore.py save_naming.py polygon_mask.py __init__.py
