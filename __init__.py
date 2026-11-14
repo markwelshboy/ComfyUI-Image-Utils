@@ -106,6 +106,36 @@ class ImageUtilsConditionalPrompt:
 
 
 
+class ImageUtilsPolygonMaskExtractor:
+    """Expose mask, mask_present and AnyPaint prompt from sidecar polygons."""
+
+    CATEGORY = CATEGORY
+    FUNCTION = "extract"
+    RETURN_TYPES = ("MASK", "BOOLEAN", "STRING")
+    RETURN_NAMES = ("mask", "mask_present", "prompt")
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "image": ("IMAGE",),
+            "sidecar_json": ("STRING", {"forceInput": True}),
+            "mask_name": ("STRING", {"default": "anypaint"}),
+        }}
+
+    def extract(self, image, sidecar_json, mask_name="anypaint"):
+        import numpy as np
+        import torch
+        from .polygon_mask import make_polygon_image
+        shape = tuple(image.shape)
+        if len(shape) != 4 or shape[0] < 1 or shape[3] not in (1, 3, 4):
+            raise ValueError("Expected ComfyUI IMAGE [batch, height, width, channels].")
+        mask, present, text = make_polygon_image(
+            sidecar_json, mask_name, int(shape[2]), int(shape[1]))
+        pixels = np.asarray(mask, dtype=np.float32) / 255.0
+        data = torch.from_numpy(pixels.copy()).unsqueeze(0).repeat(int(shape[0]), 1, 1)
+        return data, present, text
+
+
 class ImageUtilsSidecarInitialize:
     """Capture *resolved* runtime generation text and seed in a canonical record."""
 
@@ -534,6 +564,7 @@ NODE_CLASS_MAPPINGS = {
     "ImageUtilsJsonTagChecker": ImageUtilsJsonTagChecker,
     "ImageUtilsConditionalPrompt": ImageUtilsConditionalPrompt,
     "ImageUtilsSidecarInitialize": ImageUtilsSidecarInitialize,
+    "ImageUtilsPolygonMaskExtractor": ImageUtilsPolygonMaskExtractor,
     "ImageUtilsAppendProcessingEvent": ImageUtilsAppendProcessingEvent,
     "ImageUtilsSaveImageWithSidecar": ImageUtilsSaveImageWithSidecar,
     "ImageUtilsLazyImageBypass": ImageUtilsLazyImageBypass,
@@ -547,6 +578,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageUtilsJsonTagChecker": "Image Utils · JSON Tag Checker",
     "ImageUtilsConditionalPrompt": "Image Utils · Conditional Prompt",
     "ImageUtilsSidecarInitialize": "MR Sidecar Initialize (Generation)",
+    "ImageUtilsPolygonMaskExtractor": "MR Sidecar Polygon Mask Extractor",
     "ImageUtilsAppendProcessingEvent": "Image Utils · Append Processing Event",
     "ImageUtilsSaveImageWithSidecar": "Image Utils · Save Image + Sidecar (Embedded)",
     "ImageUtilsLazyImageBypass": "Image Utils · Lazy Image Bypass",
