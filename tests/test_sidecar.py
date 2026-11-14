@@ -116,7 +116,7 @@ class SidecarTests(unittest.TestCase):
     def test_comfy_nodes_have_correct_static_types(self):
         pack=nodes()
         mapping=pack.NODE_CLASS_MAPPINGS
-        self.assertEqual(len(mapping),16)
+        self.assertEqual(len(mapping),17)
         loader=mapping["ImageUtilsSidecarLoader"]()
         self.assertEqual(mapping["ImageUtilsSidecarLoader"].RETURN_TYPES,
                          ("STRING","BOOLEAN","STRING"))
