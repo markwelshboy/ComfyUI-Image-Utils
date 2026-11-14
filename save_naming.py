@@ -14,7 +14,7 @@ import re
 
 VALID_TRACKING = re.compile(r"[0-9]{1,16}\Z")
 TRAILING_COUNTER = re.compile(r"(?:^|[_\-\s])([0-9]+)\Z")
-TOKENS = {"input_name", "tracked_count", "aligned_counter", "counter", "seed", "date", "time", "batch", "stage"}
+TOKENS = {"prefix", "input_name", "tracked_count", "aligned_counter", "counter", "seed", "date", "time", "batch", "stage"}
 TOKEN_PATTERN = re.compile(r"%([^%]+)%")
 MAX_ATTEMPTS = 100000
 
@@ -129,7 +129,7 @@ def output_folder(output_root, output_directory="", allowed_roots=None):
 
 
 def expand_filename(template, *, source_name="", tracked_count="", counter=0,
-                    seed=-1, batch=0, stage="", padding=4, now=None):
+                    seed=-1, batch=0, stage="", prefix="ImageUtils", padding=4, now=None):
     if not isinstance(template, str) or not template.strip():
         raise ValueError("Enter a filename template.")
     if type(padding) is not int or not 1 <= padding <= 12:
@@ -149,6 +149,12 @@ def expand_filename(template, *, source_name="", tracked_count="", counter=0,
     if invalid:
         raise ValueError("Unknown filename token(s): " + ", ".join(sorted(invalid)))
     values = {
+        # A template controls the entire output name. The existing
+        # filename_prefix is available explicitly as %prefix% rather than
+        # silently prepended to old %input_name% templates.
+        "prefix": (_safe_component(str(prefix or "ImageUtils").replace("\\", "/")
+                                  .rsplit("/", 1)[-1].strip())
+                   if "%prefix%" in clean else ""),
         "input_name": _safe_stem(source_name),
         "tracked_count": str(tracked_count).zfill(padding),
         "aligned_counter": str(source_counter(source_name) or tracked_count).zfill(padding),
@@ -178,7 +184,7 @@ def companions_exist(folder, filename, reserved=None):
 
 
 def allocate_save_name(folder, template, *, source_name="", tracked_count=None,
-                       seed=-1, stage="", batch=0, batch_size=1,
+                       seed=-1, stage="", prefix="ImageUtils", batch=0, batch_size=1,
                        padding=4, start_counter=0, collision_policy="append_revision",
                        reserved=None, now=None):
     """Return (filename, resolved_tracking_id, sequential_counter, revision).
@@ -208,7 +214,7 @@ def allocate_save_name(folder, template, *, source_name="", tracked_count=None,
         proposed_id = str(tracked_count) if fixed_tracking else str(counter).zfill(padding)
         raw = expand_filename(template, source_name=source_name,
                               tracked_count=proposed_id, counter=counter, seed=seed,
-                              batch=batch, stage=stage, padding=padding, now=now)
+                              batch=batch, stage=stage, prefix=prefix, padding=padding, now=now)
         stem = Path(raw).stem + suffix
         candidate = stem + ".png"
         if not companions_exist(folder, candidate, reserved):

@@ -213,7 +213,11 @@ class ImageUtilsSaveImageWithSidecar:
     def INPUT_TYPES(cls):
         return {"required": {
             "images": ("IMAGE",),
-            "filename_prefix": ("STRING", {"default": "ImageUtils"}),
+            "filename_prefix": ("STRING", {
+                "default": "ImageUtils",
+                "tooltip": "Legacy filename prefix, or use %prefix% in filename_template "
+                           "to include it in custom names (e.g. %prefix%_%counter%)."
+            }),
             "include_current_workflow_in_history": ("BOOLEAN", {"default": True}),
         }, "optional": {
             "sidecar_json": ("STRING", {"forceInput": True,
@@ -228,7 +232,9 @@ class ImageUtilsSaveImageWithSidecar:
                            "Use its basename (without extension) as %input_name%."}),
             "filename_template": ("STRING", {"default": "",
                 "tooltip": "Leave empty for legacy ImageUtils_00001_.png behavior. "
-                           "Example: %input_name%_%stage%_%tracked_count%"}),
+                           "Template defines the entire basename, so include %prefix% "
+                           "when you want filename_prefix in the result. "
+                           "Examples: %prefix%_%counter%, %input_name%_%stage%_%tracked_count%"}),
             "output_directory": ("STRING", {"default": "",
                 "tooltip": "Leave empty for ComfyUI's output directory. Relative paths are "
                            "subdirectories. Absolute paths require permission via "
@@ -321,7 +327,8 @@ class ImageUtilsSaveImageWithSidecar:
             if advanced:
                 file, assigned_id, output_counter, revision = allocate_save_name(
                     folder, template, source_name=source_name, tracked_count=source_id,
-                    seed=seed, stage=stage, batch=batch_number, batch_size=count,
+                    seed=seed, stage=stage, prefix=filename_prefix,
+                    batch=batch_number, batch_size=count,
                     padding=counter_padding, start_counter=counter_start,
                     collision_policy=collision_policy, reserved=reserved)
             else:

@@ -320,6 +320,7 @@ culled_for_detailing_0087_after_detailer_pipe_and_upscaled_0087.protection_mask 
 
 | Token | Meaning |
 | --- | --- |
+| `%prefix%` | The `filename_prefix` widget value (basename), included explicitly in custom templates |
 | `%input_name%` | Source filename stem, without directory or extension |
 | `%tracked_count%` | Immutable `origin.tracking_id`, otherwise numeric source suffix, otherwise allocated ID starting 0000 |
 | `%aligned_counter%` | Counter parsed from current source filename suffix, falling back to tracked ID; useful when curated numbering differs from original generation order |
@@ -335,6 +336,24 @@ but Image-Compare exported it as `curated_set_0087.png`, the original
 `curated_set_0087_after_detailer_pipe_and_upscaled_0087.png` while
 **preserving original lineage**, use `%aligned_counter%` instead of
 `%tracked_count%`. These two tokens are intentionally different.
+
+**Important: custom templates replace legacy prefix behavior.** If
+`filename_template` is set, the saver uses it as the *entire filename*, and
+does not automatically prepend `filename_prefix`. To include that field,
+use `%prefix%` in your template. For example:
+
+```text
+filename_prefix: image_gen_2k
+filename_template: %prefix%_%counter%
+output_directory: trial2k
+→ trial2k/image_gen_2k_0000.png
+→ trial2k/image_gen_2k_0001.png
+```
+
+The preview now offers a **+ Filename prefix** button and explains when
+the field is unused. Templates that deliberately use
+`%input_name%_%stage%_%tracked_count%` are unchanged, and clearing the
+template still uses ComfyUI's original `filename_prefix` behavior.
 
 The optional explicit `tracking_id` input accepts 1–16 digits. If an
 existing sidecar already has `origin.tracking_id`, a conflicting ID raises
