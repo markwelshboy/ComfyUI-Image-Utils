@@ -183,7 +183,8 @@ class ImageUtilsSaveImageWithSidecar:
 
         # Validate the entire mask batch before saving any output files.
         # One exact-size mask is persisted per saved image; no broadcasting.
-        prepared_masks = masks_for_save(protection_mask, tuple(images.shape))
+        prepared_masks = (masks_for_save(protection_mask, tuple(images.shape))
+                          if protection_mask is not None else None)
         base = validate_document(load_document(sidecar_json))
         if prompt is not None and not isinstance(prompt, dict):
             raise ValueError("ComfyUI execution prompt must be a JSON object.")
