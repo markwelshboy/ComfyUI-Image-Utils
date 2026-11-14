@@ -7,6 +7,7 @@
 import { app } from "../../scripts/app.js";
 
 const TOKENS = [
+  ["Filename prefix", "%prefix%"],
   ["Input name", "%input_name%"],
   ["Tracked count", "%tracked_count%"],
   ["Aligned count", "%aligned_counter%"],
@@ -34,7 +35,10 @@ function templatePreview(node) {
   const now = new Date();
   const date = [now.getFullYear(),String(now.getMonth()+1).padStart(2,"0"),String(now.getDate()).padStart(2,"0")].join("-");
   const time = [now.getHours(),now.getMinutes(),now.getSeconds()].map(x=>String(x).padStart(2,"0")).join("");
+  const prefix = String(field("filename_prefix") || "ImageUtils")
+    .replaceAll("\\", "/").split("/").at(-1).trim();
   const values = {
+    prefix,
     input_name: rawName,
     tracked_count: tracked.padStart(pad,"0"),
     aligned_counter: tracked.padStart(pad,"0"),
@@ -49,7 +53,9 @@ function templatePreview(node) {
   const connected = node.inputs?.some(i=>i.link!=null &&
     ["source_name","sidecar_json","tracking_id","output_directory","seed"].includes(i.name));
   return directory.replace(/\/$/,"") + "/" + output +
-    (connected ? "  · estimate; linked inputs may change this" : "  · estimated");
+    (connected ? "  · estimate; linked inputs may change this" : "  · estimated") +
+    (template.includes("%prefix%") ? "" :
+     "  · filename_prefix omitted; insert %prefix% to include it");
 }
 
 function addLabel(text, style="") {
