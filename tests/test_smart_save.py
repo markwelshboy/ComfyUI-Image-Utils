@@ -56,6 +56,7 @@ class SmartSaverTests(unittest.TestCase):
         self.output.mkdir()
         self.fake = SimpleNamespace(
             get_output_directory=lambda: str(self.output),
+            get_temp_directory=lambda: str(self.root / "temporary"),
             get_save_image_path=lambda prefix, base, width, height:
                 (str(self.output), prefix, 1, "", prefix),
         )
@@ -216,6 +217,46 @@ class SmartSaverTests(unittest.TestCase):
         self.assertEqual(doc["origin"]["generation"]["seed"], 4343)
         self.assertEqual(doc["origin"]["tracking_id"], "0087")
         self.assertEqual(doc["origin"]["generation"]["settings"], {"denoise": 0.7})
+
+    def test_saver_returns_browser_image_metadata_for_output_folder(self):
+        result = self.save(self.init(), output_directory="generation",
+                           filename_template="%prefix%_%counter%",
+                           filename_prefix="image_gen_2k")
+        preview = result["ui"]["mr_saved_preview"][0]
+        self.assertTrue(preview["available"])
+        self.assertEqual(preview["filename"], "image_gen_2k_0000.png")
+        self.assertEqual(preview["subfolder"], "generation")
+        self.assertEqual(preview["type"], "output")
+        self.assertEqual(len(result["ui"]["images"]), 1)
+        with Image.open(Path(preview["display_path"])) as image:
+            self.assertEqual(image.size, (14, 12))
+
+    def test_external_saver_generates_small_temp_preview_without_changing_output(self):
+        external = self.root / "trusted"
+        with mock.patch.dict(os.environ, {"IMAGE_UTILS_ALLOWED_OUTPUT_DIRS": str(external)}):
+            result = self.save(self.init(), output_directory=str(external),
+                               filename_template="%prefix%_%counter%",
+                               filename_prefix="image_gen_2k")
+        self.assertEqual(result["ui"]["images"], [])
+        preview = result["ui"]["mr_saved_preview"][0]
+        self.assertTrue(preview["available"])
+        self.assertEqual(preview["type"], "temp")
+        self.assertEqual(preview["subfolder"], "")
+        self.assertTrue(preview["filename"].startswith("mr_saver_preview_"))
+        with Image.open(self.root / "temporary" / preview["filename"]) as thumb:
+            self.assertEqual(thumb.size, (14, 12))
+        self.assertEqual(Path(result["ui"]["mr_saved_paths"][0]).parent, external)
+        self.assertTrue(Path(result["ui"]["mr_saved_paths"][0]).with_suffix(".sidecar").is_file())
+
+    def test_missing_temp_preview_provider_does_not_fail_external_save(self):
+        external = self.root / "trusted"
+        delattr(self.fake, "get_temp_directory")
+        with mock.patch.dict(os.environ, {"IMAGE_UTILS_ALLOWED_OUTPUT_DIRS": str(external)}):
+            result = self.save(self.init(), output_directory=str(external))
+        preview = result["ui"]["mr_saved_preview"][0]
+        self.assertFalse(preview["available"])
+        self.assertEqual(result["ui"]["images"], [])
+        self.assertTrue(Path(preview["display_path"]).is_file())
 
     def test_output_directory_safe_paths_and_subfolders(self):
         save = self.save(self.init(), output_directory="Detailed",
