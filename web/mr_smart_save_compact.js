@@ -60,7 +60,7 @@ function connected(node,name){
 function hideRawWidgets(node, names){
  for(const name of names){
   const w=node.widgets?.find(x=>x.name===name);
-  if(!w||w.__mrSaverHidden)continue;
+  if(!w)continue;
   w.__mrSaverHidden=true;
   w.hidden=true;
   // Do not remove widgets from node.widgets: they own prompt values and
@@ -251,6 +251,10 @@ export function buildSaverUI(node,api,options){
   else if(node.__mrSmartSaveLegacy)msg="Older positional workflow: verify directory, stage and tracking ID before saving.";
   warning.hidden=!msg;warning.textContent=msg;reset.hidden=!trouble;
  }
+ function applyStoredPrefs(){
+  Object.assign(prefs,prefValues(node.properties?.[UI_SETTINGS_KEY]));
+  applyLayout(true);refresh();
+ }
  function updatePreview(message){
   previews=Array.isArray(message?.mr_saved_preview)&&message.mr_saved_preview.length?
    message.mr_saved_preview:Array.isArray(message?.images)?message.images:[];
@@ -270,7 +274,7 @@ export function buildSaverUI(node,api,options){
  });
  if(helper)helper.serialize=false;
  applyLayout(true);refresh();
- return {root,refresh,updatePreview,warning,reset,last,
+ return {root,refresh,updatePreview,applyStoredPrefs,warning,reset,last,
   get prefs(){return {...prefs};},
   close(){dialog?.close();prefsDialog?.close();}
  };
