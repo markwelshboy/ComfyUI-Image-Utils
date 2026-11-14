@@ -250,9 +250,22 @@ class ImageUtilsSaveImageWithSidecar:
             "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
             "positive_prompt": ("STRING", {"forceInput": True,
                 "tooltip": "Optional resolved runtime prompt; used to initialize when no sidecar JSON is supplied."}),
-            "negative_prompt": ("STRING", {"default": "", "multiline": True}),
-            "model_name": ("STRING", {"default": ""}),
-            "settings_json": ("STRING", {"default": "{}", "multiline": True}),
+            "negative_prompt": ("STRING", {
+                "default": "", "multiline": True,
+                "placeholder": "NEGATIVE PROMPT (optional) — leave empty if unused",
+                "tooltip": "Actual negative generation prompt. Leave empty if you did "
+                           "not use negative prompting. The first large text box."
+            }),
+            "model_name": ("STRING", {
+                "default": "", "tooltip": "Optional name of the generation model."
+            }),
+            "settings_json": ("STRING", {
+                "default": "{}", "multiline": True,
+                "placeholder": 'GENERATION SETTINGS (JSON) — e.g. {"steps": 10}',
+                "tooltip": "Optional generation parameters as a JSON object, such "
+                           "as steps, sampler, and denoise. Use {} when no settings "
+                           "were supplied. The second large text box."
+            }),
         }, "hidden": {
             "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO",
         }}
@@ -275,6 +288,46 @@ class ImageUtilsSaveImageWithSidecar:
         from PIL import Image, PngImagePlugin
         import folder_paths
         from .protection_mask import masks_for_save, write_protection_file
+
+        # A pre-existing workflow may restore old widget values by position
+        # after newer widgets have been added. Fail BEFORE writing files when
+        # types or option ranges prove that a saver has suffered this shift.
+        # Valid-looking misplaced directory or tracking ID values cannot be
+        # inferred, so the frontend also offers a deliberate repair action.
+        invalid = []
+        text_fields = {
+            "filename_prefix": filename_prefix, "source_name": source_name,
+            "filename_template": filename_template,
+            "output_directory": output_directory, "stage": stage,
+            "tracking_id": tracking_id, "negative_prompt": negative_prompt,
+            "model_name": model_name, "settings_json": settings_json,
+        }
+        invalid.extend(name for name, value in text_fields.items()
+                       if not isinstance(value, str))
+        if type(include_current_workflow_in_history) is not bool:
+            invalid.append("include_current_workflow_in_history")
+        if not isinstance(stage, str) or not stage.strip():
+            invalid.append("stage")
+        if (isinstance(tracking_id, str) and tracking_id
+                and (not tracking_id.isascii() or not tracking_id.isdigit()
+                     or len(tracking_id) > 16)):
+            invalid.append("tracking_id")
+        if type(counter_padding) is not int or not 1 <= counter_padding <= 12:
+            invalid.append("counter_padding")
+        if type(counter_start) is not int or not 0 <= counter_start <= 999999999:
+            invalid.append("counter_start")
+        if collision_policy not in ("append_revision", "error", "increment_counter"):
+            invalid.append("collision_policy")
+        if type(seed) is not int or not -1 <= seed <= 0xffffffffffffffff:
+            invalid.append("seed")
+        if invalid:
+            raise ValueError(
+                "Image Utils · Save Image + Sidecar has invalid/misaligned "
+                "widget values (" + ", ".join(dict.fromkeys(invalid)) + "). "
+                "An older ComfyUI workflow may have shifted these fields. "
+                "Use the node's 'Reset misaligned advanced settings' control, "
+                "then verify output_directory, stage and tracking_id before queuing."
+            )
         from .save_naming import (new_generation_document, read_tracking,
                                   allocate_save_name, output_folder)
 
