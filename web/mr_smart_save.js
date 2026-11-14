@@ -5,6 +5,8 @@
  * shows the last actual save path rather than pretending to know it in advance.
  */
 import { app } from "../../scripts/app.js";
+import { api } from "../../scripts/api.js";
+import { createSavePanel, hideSaverWidgets } from "./mr_smart_save_panel.js";
 
 // ComfyUI historically saved widgets_values by position. Adding widgets (or
 // converting one into an input) could silently shift values on load. Preserve a
@@ -191,109 +193,36 @@ app.registerExtension({
   async beforeRegisterNodeDef(nodeType, nodeData) {
     if (nodeData?.name !== "ImageUtilsSaveImageWithSidecar") return;
     const oldCreated = nodeType.prototype.onNodeCreated;
-    nodeType.prototype.onNodeCreated = function () {
-      const response = oldCreated?.apply(this, arguments);
-      try {
-        saverLabelTextarea(this, "negative_prompt",
-          "NEGATIVE PROMPT · optional",
-          "Optional negative text used during generation (leave empty if unused).");
-        saverLabelTextarea(this, "settings_json",
-          "GENERATION SETTINGS · JSON",
-          'Optional generation settings, e.g. {"steps":10} (default {}).');
-        const root = document.createElement("div");
-        root.style.cssText = "font:11px sans-serif;padding:9px 10px;border-radius:7px;border:1px solid #47525b;background:#181e23;color:#c7d7df;display:flex;flex-direction:column;gap:6px;";
-        const header = addLabel("FILENAME TEMPLATE · quick insert", "font:bold 11px sans-serif;color:#e4b884;");
-        const buttons = document.createElement("div");
-        buttons.style.cssText = "display:flex;flex-wrap:wrap;gap:4px;";
-        for (const [name, token] of TOKENS) {
-          const button = document.createElement("button");
-          button.type = "button";
-          button.textContent = "+" + name;
-          button.title = "Insert " + token + " into filename_template";
-          button.style.cssText = "border:1px solid #45545e;background:#2b363f;color:#d3e1ea;border-radius:4px;padding:4px 6px;cursor:pointer;font:10px sans-serif;";
-          button.addEventListener("click",event=>{
-            event.preventDefault();
-            event.stopPropagation();
-            const widget=findWidget(this,"filename_template");
-            if(!widget) return;
-            const old=String(widget.value || "");
-            widget.value=old + token;
-            widget.callback?.(widget.value);
-            this.__mrSmartSaveRefresh?.();
-            this.setDirtyCanvas?.(true,true);
+    nodeType.prototype.onNodeCreated=function(){
+      const response=oldCreated?.apply(this,arguments);
+      try{
+        // Hide only their rendering. Keep native widgets, names, input sockets,
+        // serialized values and Python execution contract unchanged.
+        hideSaverWidgets(this,findWidget,true);
+        const panel=createSavePanel(this,{
+          find:findWidget,templatePreview,issues:saverIssues,
+          repair:saverApplyRepair,tokens:TOKENS,api,
+        });
+        const helper=this.addDOMWidget("mr_filename_preview","MR_FILENAME_PREVIEW",
+          panel.body,{
+            serialize:false,
+            getMinHeight:()=>panel.preferences.previewHeight+(panel.open?475:128),
+            getMaxHeight:()=>panel.preferences.previewHeight+(panel.open?550:165),
           });
-          buttons.append(button);
-        }
-        const label = addLabel("WILL SAVE AS", "font:bold 11px sans-serif;color:#ecb06c;");
-        const preview = addLabel("", "font:11px monospace;white-space:pre-wrap;color:#9bd2aa;overflow-wrap:anywhere;");
-        const last = addLabel("Last save: not run yet", "font:10px sans-serif;color:#abb9c5;overflow-wrap:anywhere;");
-        const help = addLabel(
-          "GENERATION FIELDS ABOVE: NEGATIVE PROMPT (first text box) · " +
-          "GENERATION SETTINGS JSON (second text box, after model_name).",
-          "font:10px sans-serif;line-height:1.4;color:#b8c6cf;overflow-wrap:anywhere;");
-        const warning=addLabel("",
-          "font:11px sans-serif;line-height:1.4;padding:7px;color:#ffdaad;" +
-          "background:#4e3225;border:1px solid #a86e47;border-radius:5px;");
-        warning.hidden=true;
-        const repair=document.createElement("button");
-        repair.type="button";
-        repair.textContent="Reset misaligned advanced settings";
-        repair.title="Keep the filename prefix and template. Reset optional directory, stage, tracking ID, counters, seed, prompt and settings fields to safe defaults.";
-        repair.style.cssText="border:1px solid #ce945c;background:#643e27;color:#fff2d7;" +
-          "padding:5px 7px;border-radius:4px;cursor:pointer;font:11px sans-serif;";
-        repair.hidden=true;
-        repair.addEventListener("click",event=>{
-          event.preventDefault();event.stopPropagation();
-          if(!window.confirm(
-            "Reset optional saver settings for this node?\\n\\n" +
-            "This keeps filename_prefix, filename_template, and existing connections. " +
-            "It resets output_directory, stage, tracking_id, counters, seed, " +
-            "negative_prompt, model_name and settings_json.\\n\\n" +
-            "Review directory and stage before queuing, then save the workflow."
-          ))return;
-          saverApplyRepair(this);
-        });
-        root.append(header,buttons,label,preview,last,help,warning,repair);
-        const helper=this.addDOMWidget("mr_filename_preview","MR_FILENAME_PREVIEW",root,{
-          serialize:false,getMinHeight:()=>190,getMaxHeight:()=>280
-        });
-        // DOM widget options.serialize=false alone is insufficient in older
-        // LiteGraph builds. Explicitly keep the helper out of widgets_values,
-        // preventing another source of positional widget shifts.
         if(helper)helper.serialize=false;
-        this.__mrSmartSaveRefresh = () => {
-          const updated = templatePreview(this);
-          if(preview.textContent !== updated) preview.textContent=updated;
-          const issues=saverIssues(this);
-          const needsReview=issues.length>0 || this.__mrSmartSaveNeedsReview;
-          const legacy=!!this.__mrSmartSaveLegacy;
-          let message = this.__mrSmartSaveReviewNote || "";
-          if(issues.length){
-            message="⚠ Misaligned or invalid widget values: "+issues.join(", ")+
-              ". Other fields can be shifted too, including output_directory, stage " +
-              "and tracking_id. Do not queue until checked.";
-          }else if(needsReview){
-            message="⚠ This workflow recorded misaligned widgets; review all saver settings " +
-              "before queuing and save the workflow again.";
-          }else if(legacy){
-            message="Older positional-only workflow loaded. Check directory, stage and " +
-              "tracking ID once; the next workflow save will store values by name.";
-          }
-          warning.hidden=!message;
-          warning.textContent=message;
-          repair.hidden=!needsReview;
-        };
-        this.__mrSavedLastLabel=last;
-        this.__mrSmartSaveRefresh();
-        // The widgets can be replaced by sockets when connected; the execution
-        // result remains authoritative in those cases.
+        this.__mrSavePanel=panel;
+        this.__mrSmartSaveRefresh=panel.refresh;
+        this.__mrSavedLastLabel=panel.path;
+        panel.drawLayout();
         const oldDraw=this.onDrawForeground;
-        this.onDrawForeground=function() {
+        this.onDrawForeground=function(){
           oldDraw?.apply(this,arguments);
           this.__mrSmartSaveRefresh?.();
         };
       }catch(error){
-        console.warn("[Image Utils] Smart Save preview unavailable",error);
+        // Never leave a functional saver without any editable settings.
+        console.warn("[Image Utils] Compact saver unavailable; showing native controls",error);
+        hideSaverWidgets(this,findWidget,false);
       }
       return response;
     };
@@ -329,8 +258,17 @@ app.registerExtension({
     nodeType.prototype.onExecuted=function(message) {
       const result=oldExecuted?.apply(this,arguments);
       const paths=message?.mr_saved_paths || [];
-      if(paths.length && this.__mrSavedLastLabel){
-        this.__mrSavedLastLabel.textContent="Last save: "+paths.join(" · ");
+      const previews=message?.mr_saved_previews ||
+        (message?.images || []).map((item,index)=>({
+          ...item,preview_available:true,
+          display_path:paths[index]||item.filename,
+        }));
+      if(previews.length && this.__mrSavePanel){
+        this.__mrSavePanel.previews=previews;
+        this.__mrSavePanel.index=0;
+        this.__mrSavePanel.showPreview();
+      }else if(paths.length && this.__mrSavedLastLabel){
+        this.__mrSavedLastLabel.textContent="Saved: "+paths.join(" · ");
       }
       this.__mrSmartSaveRefresh?.();
       return result;
