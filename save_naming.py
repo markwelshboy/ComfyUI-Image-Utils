@@ -14,7 +14,7 @@ import re
 
 VALID_TRACKING = re.compile(r"[0-9]{1,16}\Z")
 TRAILING_COUNTER = re.compile(r"(?:^|[_\-\s])([0-9]+)\Z")
-TOKENS = {"input_name", "tracked_count", "counter", "seed", "date", "time", "batch", "stage"}
+TOKENS = {"input_name", "tracked_count", "aligned_counter", "counter", "seed", "date", "time", "batch", "stage"}
 TOKEN_PATTERN = re.compile(r"%([^%]+)%")
 MAX_ATTEMPTS = 100000
 
@@ -151,6 +151,7 @@ def expand_filename(template, *, source_name="", tracked_count="", counter=0,
     values = {
         "input_name": _safe_stem(source_name),
         "tracked_count": str(tracked_count).zfill(padding),
+        "aligned_counter": str(source_counter(source_name) or tracked_count).zfill(padding),
         "counter": str(counter).zfill(padding),
         "seed": str(seed) if seed >= 0 else "unknown",
         "date": now.strftime("%Y-%m-%d"),
@@ -215,7 +216,7 @@ def allocate_save_name(folder, template, *, source_name="", tracked_count=None,
         if collision_policy == "error":
             raise FileExistsError("Image, sidecar or protection mask already exists: " + str(Path(folder) / candidate))
         if collision_policy == "append_revision":
-            if not fixed_tracking and ("%tracked_count%" in template or "%counter%" in template):
+            if not fixed_tracking and ("%tracked_count%" in template or "%aligned_counter%" in template or "%counter%" in template):
                 # Newly generated images without a source ID should allocate
                 # consecutive IDs, not multiple revisions of ID 0000.
                 continue
