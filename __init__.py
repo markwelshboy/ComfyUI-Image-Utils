@@ -106,6 +106,35 @@ class ImageUtilsConditionalPrompt:
 
 
 
+class ImageUtilsSidecarInitialize:
+    """Capture *resolved* runtime generation text and seed in a canonical record."""
+
+    CATEGORY = CATEGORY
+    FUNCTION = "initialize"
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("sidecar_json",)
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "positive_prompt": ("STRING", {"forceInput": True,
+                                          "tooltip": "Connect the actual resolved prompt STRING sent to your text encoder."}),
+        }, "optional": {
+            "negative_prompt": ("STRING", {"default": "", "multiline": True}),
+            "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
+            "model_name": ("STRING", {"default": ""}),
+            "settings_json": ("STRING", {"default": "{}", "multiline": True}),
+        }}
+
+    def initialize(self, positive_prompt, negative_prompt="", seed=-1,
+                   model_name="", settings_json="{}"):
+        import json
+        from .save_naming import new_generation_document
+        record = new_generation_document(positive_prompt, negative_prompt, seed,
+                                         model_name, settings_json)
+        return (json.dumps(record, ensure_ascii=False),)
+
+
 class ImageUtilsAppendProcessingEvent:
     """Record the actual prompt chosen by the detailer, without losing origin."""
 
@@ -136,10 +165,10 @@ class ImageUtilsAppendProcessingEvent:
 
 
 class ImageUtilsSaveImageWithSidecar:
-    """Save PNG plus .sidecar, and embed a backup in PNG's image_sidecar iTXt.
+    """Save images, external/embedded sidecars and optional accumulated protection.
 
-    Hidden prompt and extra_pnginfo preserve regular ComfyUI image metadata.
-    The sidecar JSON is the source of provenance and processing history.
+    All original inputs, node ID and default filenames remain compatible.
+    New template/directory inputs are optional and opt-in.
     """
     OUTPUT_NODE = True
     CATEGORY = CATEGORY
@@ -154,22 +183,52 @@ class ImageUtilsSaveImageWithSidecar:
     def INPUT_TYPES(cls):
         return {"required": {
             "images": ("IMAGE",),
-            "sidecar_json": ("STRING", {"forceInput": True}),
             "filename_prefix": ("STRING", {"default": "ImageUtils"}),
             "include_current_workflow_in_history": ("BOOLEAN", {"default": True}),
         }, "optional": {
+            "sidecar_json": ("STRING", {"forceInput": True,
+                "tooltip": "Existing lifetime JSON from Sidecar Loader, Initialize or Append Processing Event. "
+                           "Optional: when absent a new record is created."}),
             "protection_mask": ("MASK", {
-                "tooltip": "Optional accumulated protection mask from LC Pipe Out. "
-                           "Saves one lossless <image>.protection_mask companion "
-                           "beside each PNG and .sidecar."
+                "tooltip": "Optional accumulated protection mask from LC Pipe Out, "
+                           "saved as a lossless <image>.protection_mask companion."
             }),
+            "source_name": ("STRING", {"default": "",
+                "tooltip": "Original file path or filename from Sequential Image Loader. "
+                           "Use its basename (without extension) as %input_name%."}),
+            "filename_template": ("STRING", {"default": "",
+                "tooltip": "Leave empty for legacy ImageUtils_00001_.png behavior. "
+                           "Example: %input_name%_%stage%_%tracked_count%"}),
+            "output_directory": ("STRING", {"default": "",
+                "tooltip": "Leave empty for ComfyUI's output directory. Relative paths are "
+                           "subdirectories. Absolute paths require permission via "
+                           "IMAGE_UTILS_ALLOWED_OUTPUT_DIRS."}),
+            "stage": ("STRING", {"default": "detailer-pipe"}),
+            "tracking_id": ("STRING", {"default": "",
+                "tooltip": "Optional explicit source tracking counter; overrides origin.tracking_id. "
+                           "Use digits only, preserving leading zeros."}),
+            "counter_padding": ("INT", {"default": 4, "min": 1, "max": 12}),
+            "counter_start": ("INT", {"default": 0, "min": 0, "max": 999999999}),
+            "collision_policy": (["append_revision", "error", "increment_counter"], {
+                "default": "append_revision"}),
+            "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
+            "positive_prompt": ("STRING", {"forceInput": True,
+                "tooltip": "Optional resolved runtime prompt; used to initialize when no sidecar JSON is supplied."}),
+            "negative_prompt": ("STRING", {"default": "", "multiline": True}),
+            "model_name": ("STRING", {"default": ""}),
+            "settings_json": ("STRING", {"default": "{}", "multiline": True}),
         }, "hidden": {
             "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO",
         }}
 
-    def save_images(self, images, sidecar_json, filename_prefix="ImageUtils",
-                    include_current_workflow_in_history=True,
-                    prompt=None, extra_pnginfo=None, protection_mask=None):
+    def save_images(self, images, sidecar_json=None, filename_prefix="ImageUtils",
+                    include_current_workflow_in_history=True, prompt=None,
+                    extra_pnginfo=None, protection_mask=None, source_name="",
+                    filename_template="", output_directory="", stage="detailer-pipe",
+                    tracking_id="", counter_padding=4, counter_start=0,
+                    collision_policy="append_revision", seed=-1,
+                    positive_prompt=None, negative_prompt="", model_name="",
+                    settings_json="{}"):
         import copy
         import json
         import os
@@ -180,31 +239,90 @@ class ImageUtilsSaveImageWithSidecar:
         from PIL import Image, PngImagePlugin
         import folder_paths
         from .protection_mask import masks_for_save, write_protection_file
+        from .save_naming import (new_generation_document, read_tracking,
+                                  allocate_save_name, output_folder)
 
-        # Validate the entire mask batch before saving any output files.
-        # One exact-size mask is persisted per saved image; no broadcasting.
         prepared_masks = (masks_for_save(protection_mask, tuple(images.shape))
                           if protection_mask is not None else None)
-        base = validate_document(load_document(sidecar_json))
+        if sidecar_json is None or (isinstance(sidecar_json, str) and not sidecar_json.strip()):
+            if positive_prompt is not None:
+                base = new_generation_document(positive_prompt, negative_prompt, seed,
+                                               model_name, settings_json)
+            else:
+                base = {"version": 1, "tags": [], "controls": {},
+                        "prompts": {}, "history": []}
+        else:
+            base = validate_document(load_document(sidecar_json))
         if prompt is not None and not isinstance(prompt, dict):
             raise ValueError("ComfyUI execution prompt must be a JSON object.")
-        folder, filename, counter, subfolder, _ = folder_paths.get_save_image_path(
-            filename_prefix, self.output_dir,
-            images[0].shape[1], images[0].shape[0])
-        results = []
+        if not isinstance(base.get("origin", {}), dict):
+            raise ValueError("Sidecar 'origin' must be a JSON object.")
+        if not isinstance(stage, str) or not stage.strip():
+            raise ValueError("Processing stage must be a nonempty STRING.")
+
+        original = base.get("origin", {})
+        source_name = str(source_name or original.get("source_filename") or "")
+        original_seed = original.get("generation", {})
+        if seed < 0 and isinstance(original_seed, dict) and type(original_seed.get("seed")) is int:
+            seed = original_seed["seed"]
+        source_id = read_tracking(base, source_name, tracking_id)
+        advanced = bool(str(filename_template or "").strip() or str(output_directory or "").strip())
+        reserved = set()
+        if advanced:
+            folder = output_folder(self.output_dir, output_directory)
+            folder.mkdir(parents=True, exist_ok=True)
+            # An explicit directory without a template still uses readable names.
+            template = filename_template.strip() or "%input_name%_%counter%"
+            subfolder = (folder.relative_to(Path(self.output_dir).resolve()).as_posix()
+                         if folder.is_relative_to(Path(self.output_dir).resolve()) else "")
+            legacy_name = None
+            legacy_counter = None
+        else:
+            folder, legacy_name, legacy_counter, subfolder, _ = folder_paths.get_save_image_path(
+                filename_prefix, self.output_dir, images[0].shape[1], images[0].shape[0])
+            folder = Path(folder)
+            folder.mkdir(parents=True, exist_ok=True)
+
+        results, filenames = [], []
+        count = len(images)
         for batch_number, image in enumerate(images):
-            name = filename.replace("%batch_num%", str(batch_number))
-            file = f"{name}_{counter:05}_.png"
+            if advanced:
+                file, assigned_id, output_counter, revision = allocate_save_name(
+                    folder, template, source_name=source_name, tracked_count=source_id,
+                    seed=seed, stage=stage, batch=batch_number, batch_size=count,
+                    padding=counter_padding, start_counter=counter_start,
+                    collision_policy=collision_policy, reserved=reserved)
+            else:
+                name = legacy_name.replace("%batch_num%", str(batch_number))
+                file = f"{name}_{legacy_counter:05}_.png"
+                output_counter, revision = legacy_counter, 1
+                assigned_id = source_id or str(legacy_counter).zfill(counter_padding)
+                legacy_counter += 1
             target = Path(folder) / file
             sidecar = target.with_suffix(".sidecar")
-            mask_target = target.with_suffix(".protection_mask") if prepared_masks is not None else None
-            # Preserve original provenance; only append to processing history.
+            mask_target = (target.with_suffix(".protection_mask")
+                           if prepared_masks is not None else None)
+            reserved.update((target, sidecar, Path(str(target) + ".sidecar")))
+            if mask_target:
+                reserved.add(mask_target)
+
             doc = copy.deepcopy(base)
-            history = doc.setdefault("history", [])
+            origin = doc.setdefault("origin", {})
+            # Once an origin has a tracking identifier, never overwrite it
+            # because a later output filename happens to contain a different number.
+            origin.setdefault("tracking_id", assigned_id)
+            origin.setdefault("source_filename", (Path(source_name.replace("\\", "/")).name
+                                                  if source_name else file))
             event = {
                 "stage": "image-save",
+                "processing_stage": stage,
                 "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "input_filename": source_name or None,
                 "output_filename": file,
+                "output_directory": str(folder),
+                "tracking_id": origin["tracking_id"],
+                "output_counter": output_counter,
+                "revision": revision,
             }
             if mask_target is not None:
                 event["protection_mask_file"] = mask_target.name
@@ -213,12 +331,14 @@ class ImageUtilsSaveImageWithSidecar:
                     event["execution_graph"] = prompt
                 if isinstance(extra_pnginfo, dict) and "workflow" in extra_pnginfo:
                     event["workflow"] = extra_pnginfo["workflow"]
-            history.append(event)
+            doc.setdefault("history", []).append(event)
+
             content = json.dumps(doc, ensure_ascii=False)
             if len(content.encode("utf-8")) > 16 * 1024 * 1024:
                 raise ValueError("Lifetime sidecar record exceeds 16 MiB.")
-            # Do not overwrite existing images/sidecars during batch saves.
-            if target.exists() or sidecar.exists() or (mask_target is not None and mask_target.exists()):
+            if (target.exists() or sidecar.exists() or
+                    Path(str(target) + ".sidecar").exists() or
+                    (mask_target is not None and mask_target.exists())):
                 raise FileExistsError("Image, sidecar or protection mask already exists: " + str(target))
             raw = np.clip(image.detach().cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
             output = Image.fromarray(raw)
@@ -231,10 +351,10 @@ class ImageUtilsSaveImageWithSidecar:
                         continue
                     metadata.add_text(key, json.dumps(value, ensure_ascii=False))
             metadata.add_itxt("image_sidecar", content, zip=True)
-            folder_path = Path(folder)
-            temp_png = folder_path / ("." + uuid.uuid4().hex + ".png")
-            temp_sidecar = folder_path / ("." + uuid.uuid4().hex + ".sidecar")
-            temp_mask = folder_path / ("." + uuid.uuid4().hex + ".protection_mask") if mask_target else None
+            temp_png = Path(folder) / ("." + uuid.uuid4().hex + ".png")
+            temp_sidecar = Path(folder) / ("." + uuid.uuid4().hex + ".sidecar")
+            temp_mask = (Path(folder) / ("." + uuid.uuid4().hex + ".protection_mask")
+                         if mask_target else None)
             staged = [(temp_png, target), (temp_sidecar, sidecar)]
             if mask_target is not None:
                 staged.append((temp_mask, mask_target))
@@ -242,12 +362,14 @@ class ImageUtilsSaveImageWithSidecar:
             try:
                 output.save(temp_png, pnginfo=metadata, compress_level=4)
                 temp_sidecar.write_text(
-                    json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+                    json.dumps(doc, ensure_ascii=False, indent=2) + "\n",
+                    encoding="utf-8")
                 if mask_target is not None:
                     write_protection_file(temp_mask, prepared_masks[batch_number])
-                # Roll back all companions for this frame on any failure.
+                # Hard links publish atomically without clobbering existing files
+                # if another queue worker chose the same filename meanwhile.
                 for temporary, destination in staged:
-                    os.replace(temporary, destination)
+                    os.link(temporary, destination)
                     committed.append(destination)
             except Exception:
                 for destination in reversed(committed):
@@ -256,9 +378,11 @@ class ImageUtilsSaveImageWithSidecar:
             finally:
                 for temporary, _ in staged:
                     temporary.unlink(missing_ok=True)
-            results.append({"filename": file, "subfolder": subfolder, "type": "output"})
-            counter += 1
-        return {"ui": {"images": results}}
+
+            if Path(folder).is_relative_to(Path(self.output_dir).resolve()):
+                results.append({"filename": file, "subfolder": subfolder, "type": "output"})
+            filenames.append(str(target))
+        return {"ui": {"images": results, "mr_saved_paths": filenames}}
 
 
 class ImageUtilsLazyImageBypass:
@@ -406,6 +530,7 @@ NODE_CLASS_MAPPINGS = {
     "ImageUtilsJsonFieldExtractor": ImageUtilsJsonFieldExtractor,
     "ImageUtilsJsonTagChecker": ImageUtilsJsonTagChecker,
     "ImageUtilsConditionalPrompt": ImageUtilsConditionalPrompt,
+    "ImageUtilsSidecarInitialize": ImageUtilsSidecarInitialize,
     "ImageUtilsAppendProcessingEvent": ImageUtilsAppendProcessingEvent,
     "ImageUtilsSaveImageWithSidecar": ImageUtilsSaveImageWithSidecar,
     "ImageUtilsLazyImageBypass": ImageUtilsLazyImageBypass,
@@ -418,6 +543,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "ImageUtilsJsonFieldExtractor": "Image Utils · JSON Field Extractor",
     "ImageUtilsJsonTagChecker": "Image Utils · JSON Tag Checker",
     "ImageUtilsConditionalPrompt": "Image Utils · Conditional Prompt",
+    "ImageUtilsSidecarInitialize": "MR Sidecar Initialize (Generation)",
     "ImageUtilsAppendProcessingEvent": "Image Utils · Append Processing Event",
     "ImageUtilsSaveImageWithSidecar": "Image Utils · Save Image + Sidecar (Embedded)",
     "ImageUtilsLazyImageBypass": "Image Utils · Lazy Image Bypass",
