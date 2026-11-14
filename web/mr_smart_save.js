@@ -40,13 +40,14 @@ function saverValid(name, value) {
   if (name === "counter_start")
     return Number.isSafeInteger(value) && value >= 0 && value <= 999999999;
   if (name === "seed")
-    return Number.isSafeInteger(value) && value >= -1;
+    return Number.isInteger(value) && value >= -1;
   if (name === "collision_policy") return SAVER_COLLISION_OPTIONS.includes(value);
   if (name === "settings_json") {
     if (typeof value !== "string") return false;
-    try { return JSON.parse(value || "{}") instanceof Object &&
-                 !Array.isArray(JSON.parse(value || "{}")); }
-    catch { return false; }
+    try {
+      const parsed = JSON.parse(value || "{}");
+      return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+    } catch { return false; }
   }
   return false;
 }
@@ -107,6 +108,7 @@ function saverLabelTextarea(node, name, title, placeholder) {
   input.setAttribute("aria-label",title);
   input.setAttribute("title",title);
   input.setAttribute("placeholder",placeholder);
+  widget.label = title;
   // Static SVG CSS background keeps the label visible even for settings_json
   // whose default value is {}. No new widget or content is serialized.
   const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="355" height="25">' +
@@ -191,6 +193,12 @@ app.registerExtension({
     nodeType.prototype.onNodeCreated = function () {
       const response = oldCreated?.apply(this, arguments);
       try {
+        saverLabelTextarea(this, "negative_prompt",
+          "NEGATIVE PROMPT · optional",
+          "Optional negative text used during generation (leave empty if unused).");
+        saverLabelTextarea(this, "settings_json",
+          "GENERATION SETTINGS · JSON",
+          'Optional generation settings, e.g. {"steps":10} (default {}).');
         const root = document.createElement("div");
         root.style.cssText = "font:11px sans-serif;padding:9px 10px;border-radius:7px;border:1px solid #47525b;background:#181e23;color:#c7d7df;display:flex;flex-direction:column;gap:6px;";
         const header = addLabel("FILENAME TEMPLATE · quick insert", "font:bold 11px sans-serif;color:#e4b884;");
@@ -218,13 +226,57 @@ app.registerExtension({
         const label = addLabel("WILL SAVE AS", "font:bold 11px sans-serif;color:#ecb06c;");
         const preview = addLabel("", "font:11px monospace;white-space:pre-wrap;color:#9bd2aa;overflow-wrap:anywhere;");
         const last = addLabel("Last save: not run yet", "font:10px sans-serif;color:#abb9c5;overflow-wrap:anywhere;");
-        root.append(header,buttons,label,preview,last);
+        const help = addLabel(
+          "GENERATION FIELDS ABOVE: NEGATIVE PROMPT (first text box) · " +
+          "GENERATION SETTINGS JSON (second text box, after model_name).",
+          "font:10px sans-serif;line-height:1.4;color:#b8c6cf;overflow-wrap:anywhere;");
+        const warning=addLabel("",
+          "font:11px sans-serif;line-height:1.4;padding:7px;color:#ffdaad;" +
+          "background:#4e3225;border:1px solid #a86e47;border-radius:5px;");
+        warning.hidden=true;
+        const repair=document.createElement("button");
+        repair.type="button";
+        repair.textContent="Reset misaligned advanced settings";
+        repair.title="Keep the filename prefix and template. Reset optional directory, stage, tracking ID, counters, seed, prompt and settings fields to safe defaults.";
+        repair.style.cssText="border:1px solid #ce945c;background:#643e27;color:#fff2d7;" +
+          "padding:5px 7px;border-radius:4px;cursor:pointer;font:11px sans-serif;";
+        repair.hidden=true;
+        repair.addEventListener("click",event=>{
+          event.preventDefault();event.stopPropagation();
+          if(!window.confirm(
+            "Reset optional saver settings for this node?\\n\\n" +
+            "This keeps filename_prefix, filename_template, and existing connections. " +
+            "It resets output_directory, stage, tracking_id, counters, seed, " +
+            "negative_prompt, model_name and settings_json.\\n\\n" +
+            "Review directory and stage before queuing, then save the workflow."
+          ))return;
+          saverApplyRepair(this);
+        });
+        root.append(header,buttons,label,preview,last,help,warning,repair);
         this.addDOMWidget("mr_filename_preview","MR_FILENAME_PREVIEW",root,{
-          serialize:false,getMinHeight:()=>132,getMaxHeight:()=>172
+          serialize:false,getMinHeight:()=>190,getMaxHeight:()=>280
         });
         this.__mrSmartSaveRefresh = () => {
           const updated = templatePreview(this);
           if(preview.textContent !== updated) preview.textContent=updated;
+          const issues=saverIssues(this);
+          const needsReview=issues.length>0 || this.__mrSmartSaveNeedsReview;
+          const legacy=!!this.__mrSmartSaveLegacy;
+          let message = this.__mrSmartSaveReviewNote || "";
+          if(issues.length){
+            message="⚠ Misaligned or invalid widget values: "+issues.join(", ")+
+              ". Other fields can be shifted too, including output_directory, stage " +
+              "and tracking_id. Do not queue until checked.";
+          }else if(needsReview){
+            message="⚠ This workflow recorded misaligned widgets; review all saver settings " +
+              "before queuing and save the workflow again.";
+          }else if(legacy){
+            message="Older positional-only workflow loaded. Check directory, stage and " +
+              "tracking ID once; the next workflow save will store values by name.";
+          }
+          warning.hidden=!message;
+          warning.textContent=message;
+          repair.hidden=!needsReview;
         };
         this.__mrSavedLastLabel=last;
         this.__mrSmartSaveRefresh();
@@ -240,6 +292,34 @@ app.registerExtension({
       }
       return response;
     };
+    const oldConfigure=nodeType.prototype.onConfigure;
+    nodeType.prototype.onConfigure=function(info) {
+      const result=oldConfigure?.apply(this,arguments);
+      const own=info?.properties?.[SAVER_SNAPSHOT_KEY];
+      const named=own?.version===SAVER_SNAPSHOT_VERSION && own?.fields &&
+        typeof own.fields==="object" ? own.fields : info?.widgets_values_named;
+      if(named) saverRestoreNamed(this,named);
+      this.__mrSmartSaveLegacy=!named && Array.isArray(info?.widgets_values) &&
+        info.widgets_values.length>2;
+      this.__mrSmartSaveNeedsReview=own?.needs_review === true;
+      this.__mrSmartSaveReviewNote="";
+      this.__mrSmartSaveRefresh?.();
+      return result;
+    };
+
+    const oldSerialize=nodeType.prototype.onSerialize;
+    nodeType.prototype.onSerialize=function(info) {
+      const result=oldSerialize?.apply(this,arguments);
+      if(!info||typeof info!=="object")return result;
+      if(!info.properties || typeof info.properties!=="object")info.properties={};
+      info.properties[SAVER_SNAPSHOT_KEY]={
+        version:SAVER_SNAPSHOT_VERSION,
+        fields:saverNamedValues(this),
+        needs_review:saverIssues(this).length>0 || !!this.__mrSmartSaveNeedsReview,
+      };
+      return result;
+    };
+
     const oldExecuted=nodeType.prototype.onExecuted;
     nodeType.prototype.onExecuted=function(message) {
       const result=oldExecuted?.apply(this,arguments);
