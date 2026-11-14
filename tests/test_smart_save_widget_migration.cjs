@@ -11,6 +11,32 @@ let extension;
 const fakeApp={registerExtension(ext){extension=ext;}};
 const notifications=[];
 const ctx=vm.createContext({
+  __api:{apiURL:p=>p},
+  __hide(node,find,hidden){for(const w of node.widgets||[])w.hidden=hidden;},
+  __panel(node,{issues,repair,find}){
+    const root={children:[],append(...x){this.children.push(...x);}};
+    const warn={hidden:true,textContent:""};
+    const reset={hidden:true,click(){
+      repair(node);
+      display.refresh();
+    }};
+    root.append({textContent:"Toolbar"},{textContent:"Image preview"},warn,reset);
+    const display={
+      body:root,preferences:{previewHeight:340},open:false,
+      path:{textContent:""},previews:[],index:0,
+      drawLayout(){this.refresh();},
+      showPreview(){},
+      refresh(){
+        const bad=issues(node);
+        warn.hidden=!bad.length && !node.__mrSmartSaveNeedsReview &&
+          !node.__mrSmartSaveLegacy && !node.__mrSmartSaveReviewNote;
+        warn.textContent=bad.length ? "Misaligned: "+bad.join(", ") :
+          (node.__mrSmartSaveReviewNote||"");
+        reset.hidden=!bad.length&&!node.__mrSmartSaveNeedsReview;
+      },
+    };
+    return display;
+  },
   __app:fakeApp,
   console:{warn(...a){notifications.push(a.join(" "));}},
   window:{confirm:()=>true},
@@ -27,8 +53,13 @@ const ctx=vm.createContext({
   }},
   Date,Math,JSON,Object,Number,Array,Set,String,RegExp,
 });
-const script=source.replace('import { app } from "../../scripts/app.js";',
-                            "const app=globalThis.__app;");
+const script=source
+  .replace('import { app } from "../../scripts/app.js";',
+           "const app=globalThis.__app;")
+  .replace('import { api } from "../../scripts/api.js";',
+           "const api=globalThis.__api;")
+  .replace('import { createSavePanel, hideSaverWidgets } from "./mr_smart_save_panel.js";',
+           "const createSavePanel=globalThis.__panel; const hideSaverWidgets=globalThis.__hide;");
 vm.runInContext(script,ctx);
 assert.ok(extension,"Smart Save extension must register");
 
@@ -72,18 +103,13 @@ function createNode(){
 }
 
 const node=createNode();
-const positive=node.widgets.find(w=>w.name==="negative_prompt");
-const settings=node.widgets.find(w=>w.name==="settings_json");
-assert.match(positive.element.attributes["aria-label"],/NEGATIVE PROMPT/);
-assert.match(settings.element.attributes["aria-label"],/GENERATION SETTINGS/);
-assert.match(positive.element.attributes.placeholder,/NEGATIVE PROMPT/);
-assert.match(settings.element.attributes.placeholder,/GENERATION SETTINGS/);
-assert.match(positive.element.style.backgroundImage,/NEGATIVE%20PROMPT/);
-assert.equal(positive.element.style.paddingTop,"32px");
-assert.equal(settings.element.style.paddingTop,"32px");
 assert.equal(node.widgets.at(-1).name,"mr_filename_preview");
 assert.equal(node.widgets.at(-1).serialize,false,
-  "Helper widget must never add a positional saved value");
+  "Preview widget must never add positional workflow values");
+assert.ok(node.widgets.find(w=>w.name==="negative_prompt").hidden,
+  "Native textarea is visually hidden; custom panel draws its labeled input");
+assert.ok(node.__mrSavePanel && node.__mrSavePanel.body,
+  "Compact saver panel must be installed");
 
 const firstSave={properties:{}};
 node.onSerialize(firstSave);
@@ -109,7 +135,7 @@ for(const [field,expected] of Object.entries(values)){
   assert.equal(node.widgets.find(w=>w.name===field).value,expected,
     "Named saver snapshot should restore "+field);
 }
-assert.ok(node.previewRoot.children.length>=7);
+assert.ok(node.previewRoot.children.length>=4);
 const warning=node.previewRoot.children.at(-2);
 const repair=node.previewRoot.children.at(-1);
 assert.equal(warning.hidden,true,"Correct snapshot must clear alignment warning");
@@ -159,4 +185,4 @@ old.onConfigure({properties:{},widgets_values:["ImageUtils",true]});
 assert.equal(old.__mrSmartSaveLegacy,false);
 assert.equal(old.previewRoot.children.at(-2).hidden,true);
 
-console.log("Smart Saver widget labels, stable named snapshot, legacy detection and repair passed");
+console.log("Smart Saver named workflow snapshot, legacy detection, and repair passed");
