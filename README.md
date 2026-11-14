@@ -197,6 +197,129 @@ directory; the forwarded IMAGE is never resized or re-encoded. Set
 Preview Image, merely placing one of these inline nodes in a group does not
 create an independently requested output endpoint.
 
+## Initial generation: canonical resolved prompt and seed
+
+**MR Sidecar Initialize (Generation)** is available under **Image Utils /
+Sidecars**. Connect the actual final resolved prompt STRING (the same one fed
+into your Krea2/WAN/CLIP/text encoder). Optionally connect the actual seed,
+negative prompt, model name and a `settings_json` object. It produces an
+ordinary `sidecar_json` STRING for **Image Utils · Save Image + Sidecar
+(Embedded)**, without requiring an incoming sidecar.
+
+```text
+PromptLibrary resolved STRING ──┬──→ Text Encoder ──→ Generation → IMAGE ┐
+                                └──→ MR Sidecar Initialize              │
+                                           ▲ seed, model, settings       │
+                                           └──→ sidecar_json ────────────┤
+                                                      Save + Sidecar ←───┘
+```
+
+The canonical fields are:
+
+```json
+{
+  "version": 1, "tags": [], "controls": {},
+  "prompts": {"generation": {
+    "positive": "The actual resolved generation prompt",
+    "negative": "Optional negative text"
+  }},
+  "origin": {"generation": {
+    "model": "Krea 2", "seed": 123, "settings": {"steps": 10}
+  }},
+  "history": []
+}
+```
+
+The prompt comes from the actual resolved node output, **not inferred from
+the saved ComfyUI workflow graph**. The full current workflow stays in the
+normal ComfyUI PNG metadata, while the compact original prompt and seed live
+in `image_sidecar` (embedded PNG) and the companion JSON `.sidecar`.
+
+For simple pipelines you can **omit sidecar_json entirely** from the Save
+node and connect its optional `positive_prompt` / `seed` inputs directly.
+It constructs the same canonical JSON. If no JSON or prompt is supplied, it
+creates an empty but valid lifetime sidecar, without pretending to know the
+resolved prompt. If an existing JSON is supplied, its original generation
+prompt and provenance are preserved rather than overwritten by detailer text.
+
+### Intelligent filenames for generation and detailer output
+
+The existing **Image Utils · Save Image + Sidecar (Embedded)** node has
+optional controls; the old `filename_prefix` + ComfyUI counter behavior is
+unchanged if **filename_template** and **output_directory** are left blank.
+Both old and new workflows keep the same node ID, PNG workflow metadata, and
+PNG + .sidecar + optional .protection_mask output.
+
+For your detailer flow, connect the full source `file_path` from Sequential
+Image Loader to **source_name**, and set:
+
+```text
+output_directory: /workspace/ComfyUI/output_gpu0/Final
+stage: after_detailer_pipe_and_upscaled
+filename_template: %input_name%_%stage%_%tracked_count%
+counter_padding: 4
+collision_policy: append_revision
+```
+
+For source `culled_for_detailing_0087.png` the result is:
+
+```text
+culled_for_detailing_0087_after_detailer_pipe_and_upscaled_0087.png
+culled_for_detailing_0087_after_detailer_pipe_and_upscaled_0087.sidecar
+culled_for_detailing_0087_after_detailer_pipe_and_upscaled_0087.protection_mask  (optional)
+```
+
+| Token | Meaning |
+| --- | --- |
+| `%input_name%` | Source filename stem, without directory or extension |
+| `%tracked_count%` | Immutable `origin.tracking_id`, otherwise numeric source suffix, otherwise allocated ID starting 0000 |
+| `%aligned_counter%` | Counter parsed from current source filename suffix, falling back to tracked ID; useful when curated numbering differs from original generation order |
+| `%counter%` | Independent collision-aware sequential output counter, starting at `counter_start` |
+| `%stage%` | Current saver processing-stage name |
+| `%seed%` | Connected seed, or original `origin.generation.seed`; `unknown` when unavailable |
+| `%date%` / `%time%` | Server-local current date / time |
+| `%batch%` | Three-digit current batch index |
+
+**Curated renumbering:** If the image was originally `generated_0001.png`
+but Image-Compare exported it as `curated_set_0087.png`, the original
+`origin.tracking_id` might still be `0001`. To produce
+`curated_set_0087_after_detailer_pipe_and_upscaled_0087.png` while
+**preserving original lineage**, use `%aligned_counter%` instead of
+`%tracked_count%`. These two tokens are intentionally different.
+
+The optional explicit `tracking_id` input accepts 1–16 digits. If an
+existing sidecar already has `origin.tracking_id`, a conflicting ID raises
+an error rather than silently rewriting the original identity. Legacy
+source filenames without a trailing numeric suffix receive increasing
+IDs (0000, 0001, ...). Counter padding is preserved when the incoming
+source has leading zeros. Batch outputs without `%batch%` automatically
+receive distinct `_b000`, `_b001` suffixes.
+
+The **collision policy** defaults to `append_revision`: a repeated save
+of a tracked image becomes `..._v02.png`, while its tracking ID remains
+unchanged. `error` refuses collisions; `increment_counter` advances
+`%counter%` for filenames containing that token. Existing image,
+sidecar, and mask companions are never knowingly overwritten. Each save
+adds a compact `image-save` event including input filename, output
+filename and directory, tracking ID, revision and stage. The full workflow
+is included in history only when `include_current_workflow_in_history`
+is enabled; **disable this for compact long-lived sidecars**, because
+ComfyUI's standard PNG workflow metadata is still saved separately.
+
+**Directory safety:** Relative `output_directory` values are resolved
+below the configured ComfyUI output directory. Absolute paths work if
+they are inside that root. To allow another location explicitly, set
+`IMAGE_UTILS_ALLOWED_OUTPUT_DIRS` to a platform-separated list of trusted
+absolute roots before starting ComfyUI. Symlink escapes outside permitted
+roots are rejected. Files written to additional roots are saved, but their
+image thumbnails may not appear in ComfyUI's normal output viewer.
+
+A small on-node **filename-token picker and live estimate** appears in
+the frontend. When dynamic inputs are connected, the estimate is only
+illustrative: **Last save** displays the actual resolved path returned by
+the backend after execution. As with other ComfyUI DOM widgets, a frontend
+restart/refresh may be needed after upgrading the extension.
+
 ## Lifetime provenance and embedded backup (new)
 
 A sidecar is a **persistent lifetime record**, not just a temporary prompt
@@ -215,7 +338,7 @@ appends an entry to `history` and passes the complete sidecar JSON onward
 without replacing `origin`.
 
 **Image Utils · Save Image + Sidecar (Embedded)** takes the processed IMAGE
-and updated `sidecar_json` and saves both the new PNG and its JSON `.sidecar`.
+and optional updated `sidecar_json` and saves both the new PNG and its JSON `.sidecar`.
 It ALSO embeds a compressed PNG iTXt backup with key `image_sidecar`, and
 preserves ComfyUI's usual `prompt` and `workflow` PNG metadata. It can
 optionally archive the current execution graph and UI workflow in the

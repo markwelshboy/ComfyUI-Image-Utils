@@ -85,7 +85,7 @@ class ProtectionMaskTests(unittest.TestCase):
 
     def test_registration_save_input_and_restore_outputs(self):
         nodes = self.pack.NODE_CLASS_MAPPINGS
-        self.assertEqual(len(nodes), 16)
+        self.assertEqual(len(nodes), 17)
         self.assertIn("protection_mask",
                       nodes["ImageUtilsSaveImageWithSidecar"].INPUT_TYPES()["optional"])
         cls = nodes["ImageUtilsMRLoadProtectionIntoPipe"]
@@ -141,15 +141,15 @@ class ProtectionMaskTests(unittest.TestCase):
             self.assertEqual(list(self.root.iterdir()), [])
 
     def test_no_overwrite_and_all_companions_cleaned_if_mask_commit_fails(self):
-        # Make os.replace fail on the *third* file (mask) to test rollback.
-        actual_replace = os.replace
+        # Make os.link fail on the *third* file (mask) to test rollback.
+        actual_link = os.link
         calls = []
         def fail_mask(src, dst):
             calls.append(Path(dst))
             if str(dst).endswith(".protection_mask"):
                 raise OSError("forced mask failure")
-            return actual_replace(src, dst)
-        with mock.patch("os.replace", side_effect=fail_mask):
+            return actual_link(src, dst)
+        with mock.patch("os.link", side_effect=fail_mask):
             with self.assertRaisesRegex(OSError, "forced mask failure"):
                 self.save(Tensor(self.masks))
         self.assertEqual(list(self.root.iterdir()), [],
