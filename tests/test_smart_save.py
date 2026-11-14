@@ -242,6 +242,34 @@ class SmartSaverTests(unittest.TestCase):
             self.assertEqual(json.loads((self.output / f).with_suffix(".sidecar").read_text())
                              ["origin"]["tracking_id"], "0087")
 
+    def test_corrupt_old_widget_values_refused_before_any_file_is_saved(self):
+        invalid = [
+            ({"counter_padding": 0}, "counter_padding"),
+            ({"counter_start": float("nan")}, "counter_start"),
+            ({"collision_policy": -1}, "collision_policy"),
+            ({"stage": ""}, "stage"),
+            ({"tracking_id": 4}, "tracking_id"),
+            ({"seed": "control after generate"}, "seed"),
+        ]
+        for updates, expected in invalid:
+            with self.subTest(invalid=updates):
+                with self.assertRaisesRegex(ValueError,
+                                             "invalid/misaligned.*" + expected):
+                    self.save(None, **updates)
+                self.assertFalse(list(self.output.glob("*.png")))
+                self.assertFalse(list(self.output.glob("*.sidecar")))
+
+    def test_generation_prompt_multiline_fields_are_explicitly_labeled(self):
+        spec = self.pack.ImageUtilsSaveImageWithSidecar.INPUT_TYPES()
+        negative = spec["optional"]["negative_prompt"][1]
+        settings = spec["optional"]["settings_json"][1]
+        self.assertTrue(negative["multiline"])
+        self.assertTrue(settings["multiline"])
+        self.assertIn("NEGATIVE PROMPT", negative["placeholder"])
+        self.assertIn("GENERATION SETTINGS", settings["placeholder"])
+        self.assertEqual(settings["default"], "{}")
+        self.assertEqual(negative["default"], "")
+
     def test_optional_sidecar_keeps_legacy_naming_and_prompt_metadata(self):
         with mock.patch.dict(sys.modules, {"folder_paths": self.fake}):
             result = self.saver().save_images(
