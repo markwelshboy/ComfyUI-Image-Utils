@@ -298,7 +298,7 @@ This is an **additive** integration with
 It does **not** edit, unregister, monkeypatch, or replace the original LoneCat
 detailers. Existing workflows using the original node IDs remain unchanged.
 
-Four additional nodes are available under **Image Utils / MR Lazy Detailers**:
+Five additional nodes are available under **Image Utils / MR Lazy Detailers**:
 
 | Node | Purpose |
 | --- | --- |
@@ -306,6 +306,63 @@ Four additional nodes are available under **Image Utils / MR Lazy Detailers**:
 | **MR Lazy Character Detailer (pipe)** | Equivalent adapter for LC Character Detailer (pipe) |
 | **MR VRAM Cache Clear (Inline)** | Passes any value through unchanged; clears caches **only if requested by downstream** |
 | **MR Conditional Preview Sink** | Conditional multi-input IMAGE/MASK previews plus on-node SKIPPED/SELECTED lamp |
+| **MR Pipe Image Replace (Preserve Protection)** | Replaces LC_PIPE's image after an external processing stage while retaining accumulated LC protection |
+
+### Preserve accumulated protection across a SEGS detailer
+
+Use **MR Pipe Image Replace (Preserve Protection)** when an external
+image-only processing stage changes pixels without changing the image's
+shape or alignment. The node takes exactly **two required inputs**:
+`pipe: LC_PIPE` and `image: IMAGE` (the processed result), and returns
+**one `LC_PIPE` output**. It is a non-output node and doesn't force
+an otherwise bypassed lazy branch.
+
+```text
+MR Lazy Detailer 1 → MR Lazy Detailer 2 → MR Lazy Detailer 3
+                                                │ LC_PIPE
+                                                ▼
+                                            LC Pipe Out
+                                            │         │
+                                            │ pipe    └─ IMAGE → SEGS Detailer ── IMAGE ─┐
+                                            │                                          │
+                                            ▼                                          ▼
+                                          MR Pipe Image Replace (Preserve Protection)
+                                                               │ LC_PIPE
+                                                               ▼
+                                                       Final MR Lazy Detailer
+```
+
+**Connect `LC Pipe Out.pipe` to the MR node's `pipe` and the output
+image from SEGS to its `image` input.** The separate LC Pipe Out
+`protect_mask` output and the SEGS mask output are **not needed**.
+The SEGS edit does not contribute any new protection; only the masks
+from prior LC detailers are retained. The final LC/MR detailer then
+merges its newly processed region with those existing masks.
+
+Why this is necessary: LC MaskMaker stores the accumulated mask under
+`pipe["lc_protect"]` as both a tensor and a fingerprint of the image
+it protects. LC Pipe (in/edit) preserves that dictionary but doesn't
+update its fingerprint when a new image is inserted. The following
+detailer therefore treats the old protection as stale and uses only
+its own mask. The MR replacement node:
+
+1. Verifies the existing pipe's original image is well formed.
+2. Verifies the original protection fingerprint is **valid for the
+   original image** (refuses to revive a preexisting stale mask).
+3. Validates that the updated image has **identical batch, dimensions,
+   and channels**, and the old mask exactly matches batch/height/width.
+4. Copies the pipe, substitutes the processed image, and updates only
+   the protection fingerprint using **LoneCat's exact fingerprint
+   calculation**. The accumulated mask tensor and its pixels are unchanged.
+5. Removes `lc_found` (cached SAM3 finds for the previous image);
+   fresh detections can be computed as needed. All other pipe settings
+   remain unchanged.
+
+If the incoming pipe has **no previous protection mask**, image
+replacement still works normally. If the SEGS stage resizes the image,
+changes batch size, moves the subject substantially, or produces a stale
+original mask, the safe approach is to reject the replacement or to
+realign the mask separately—not to retag it blindly.
 
 ### Wiring with KJ Lazy Switch
 
