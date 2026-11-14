@@ -273,11 +273,19 @@ culled_for_detailing_0087_after_detailer_pipe_and_upscaled_0087.protection_mask 
 | --- | --- |
 | `%input_name%` | Source filename stem, without directory or extension |
 | `%tracked_count%` | Immutable `origin.tracking_id`, otherwise numeric source suffix, otherwise allocated ID starting 0000 |
+| `%aligned_counter%` | Counter parsed from current source filename suffix, falling back to tracked ID; useful when curated numbering differs from original generation order |
 | `%counter%` | Independent collision-aware sequential output counter, starting at `counter_start` |
 | `%stage%` | Current saver processing-stage name |
 | `%seed%` | Connected seed, or original `origin.generation.seed`; `unknown` when unavailable |
 | `%date%` / `%time%` | Server-local current date / time |
 | `%batch%` | Three-digit current batch index |
+
+**Curated renumbering:** If the image was originally `generated_0001.png`
+but Image-Compare exported it as `curated_set_0087.png`, the original
+`origin.tracking_id` might still be `0001`. To produce
+`curated_set_0087_after_detailer_pipe_and_upscaled_0087.png` while
+**preserving original lineage**, use `%aligned_counter%` instead of
+`%tracked_count%`. These two tokens are intentionally different.
 
 The optional explicit `tracking_id` input accepts 1–16 digits. If an
 existing sidecar already has `origin.tracking_id`, a conflicting ID raises
