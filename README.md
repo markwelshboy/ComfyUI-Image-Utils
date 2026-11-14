@@ -388,6 +388,45 @@ illustrative: **Last save** displays the actual resolved path returned by
 the backend after execution. As with other ComfyUI DOM widgets, a frontend
 restart/refresh may be needed after upgrading the extension.
 
+### Compact Save Image interface and saved-image preview
+
+The existing **Image Utils · Save Image + Sidecar (Embedded)** node now uses a
+custom compact frontend, without adding or renaming Python inputs or changing
+the underlying output/sidecar behavior.
+
+**Collapsed by default:** a short toolbar (▸ Settings, ⚙ preferences, PNG +
+sidecar indicator), a **persistent image preview**, and a saved-path/status
+line. The saved image appears in the preview after generation, with
+previous/next controls for multiple batch outputs. Click the image to open it
+larger.
+
+**Expanded settings:** compact, scrollable controls grouped into **Naming**,
+**Output**, **Counters**, **Provenance**, and **Advanced Metadata**. Filename
+token buttons and the reactive “Will save as” estimate live in the Naming
+section. Existing sockets (IMAGE, sidecar_json, connected prompt, etc.)
+remain available. Connected widget inputs are read-only in the custom panel,
+since their actual values are supplied by upstream nodes.
+
+The ⚙ preferences dialog adjusts image-preview height (180–700 px), whether
+settings start collapsed, and compact spacing. These appearance preferences
+persist **in the local browser**; actual filename, directory, counters,
+and metadata remain saved with the ComfyUI workflow.
+
+The backend now returns a separate \`mr_saved_previews\` UI array with each
+saved filename, subfolder, display path, and browser preview availability.
+Images inside the configured ComfyUI output tree are served via its normal
+\`/view\` endpoint. If an explicitly allowed custom output directory lies
+outside that served tree, saving still works and the panel shows the absolute
+saved path, but explains that browser preview isn't available there. No
+arbitrary filesystem paths are exposed as web URLs.
+
+**Compatibility:** All original native widgets are **visually hidden**, not
+removed or reordered. They remain the authoritative serializable values
+and Python inputs. The single DOM preview/control helper remains explicitly
+non-serializable. Named-value snapshots and shifted-widget validation are
+unchanged. If the custom frontend fails to initialize, the node restores its
+native controls rather than becoming unusable.
+
 ### Text-area labels and safe workflow widget migration
 
 The saver has two multiline fields that ComfyUI ordinarily renders without
