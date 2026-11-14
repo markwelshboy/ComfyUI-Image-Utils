@@ -108,7 +108,7 @@ function saverLabelTextarea(node, name, title, placeholder) {
   if (!input || typeof input.setAttribute !== "function") return false;
   input.setAttribute("aria-label",title);
   input.setAttribute("title",title);
-  input.setAttribute("placeholder",placeholder);
+  input.setAttribute("placeholder",title+" — "+placeholder);
   widget.label = title;
   // Static SVG CSS background keeps the label visible even for settings_json
   // whose default value is {}. No new widget or content is serialized.
