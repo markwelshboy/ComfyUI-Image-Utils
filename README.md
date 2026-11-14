@@ -197,6 +197,55 @@ directory; the forwarded IMAGE is never resized or re-encoded. Set
 Preview Image, merely placing one of these inline nodes in a group does not
 create an independently requested output endpoint.
 
+## AnyPaint masks from Image-Compare polygons
+
+**MR Sidecar Polygon Mask Extractor** appears under **Image Utils / Sidecars**.
+
+Connect:
+- `image` to the full-resolution IMAGE from the Sequential Image Loader.
+- `sidecar_json` to the JSON STRING from **Image Sidecar Loader**.
+- `mask_name` to `anypaint` (default).
+
+It returns exactly three typed outputs:
+- `mask` **MASK** — standard float32 [batch, height, width], black = don't edit,
+  white = editable region. Additive polygons and subtractive holes are composed
+  in saved order.
+- `mask_present` **BOOLEAN** — true only if enabled and at least one additive
+  region survives rasterization; false for absent, disabled or empty masks.
+- `prompt` **STRING** — associated AnyPaint inpaint prompt, or empty string
+  when no valid active mask exists.
+
+Sidecars contain editable, normalized polygon coordinates and reference
+dimensions, not raster masks:
+
+```json
+{
+  "masks": {
+    "anypaint": {
+      "enabled": true,
+      "reference_size": [1024, 1536],
+      "prompt": "Remove misplaced tattoo and restore natural skin texture",
+      "regions": [
+        {"operation": "add", "points": [[0.22,0.34],[0.33,0.32],[0.35,0.42],[0.21,0.44]]}
+      ]
+    }
+  }
+}
+```
+
+The extractor renders the mask at the incoming IMAGE resolution. Matching
+aspect ratio is required (within 1%); crops/reframing are deliberately rejected
+because stale polygons could cover the wrong region. Scaling the same composition
+is allowed. Image batches receive identical masks when the image geometry is
+shared. Missing masks produce an all-black MASK and `mask_present=false`.
+
+**Lazy AnyPaint:** Route `mask_present` to a KJ lazy switch choosing the
+unprocessed input IMAGE when false and AnyPaint output when true. Ensure
+AnyPaint's own output and preview nodes do not have independent connections
+that force the expensive branch. The prompt goes into your inpaint text encoder.
+These polygons are independent of the LoneCat accumulated `lc_protect` mask
+and do not modify that protection data.
+
 ## Initial generation: canonical resolved prompt and seed
 
 **MR Sidecar Initialize (Generation)** is available under **Image Utils /

@@ -85,7 +85,7 @@ class ProtectionMaskTests(unittest.TestCase):
 
     def test_registration_save_input_and_restore_outputs(self):
         nodes = self.pack.NODE_CLASS_MAPPINGS
-        self.assertEqual(len(nodes), 17)
+        self.assertEqual(len(nodes), 18)
         self.assertIn("protection_mask",
                       nodes["ImageUtilsSaveImageWithSidecar"].INPUT_TYPES()["optional"])
         cls = nodes["ImageUtilsMRLoadProtectionIntoPipe"]
