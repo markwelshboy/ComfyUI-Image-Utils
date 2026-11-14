@@ -16,6 +16,7 @@ class Element {
  append(...nodes){
   for(const node of nodes){node.parent=this;this.children.push(node);}
  }
+ appendChild(node){this.append(node);return node;}
  prepend(node){node.parent=this;this.children.unshift(node);}
  setAttribute(k,v){this.attributes[k]=String(v);}
  addEventListener(n,cb){(this.listeners[n]||=[]).push(cb);}
