@@ -282,6 +282,95 @@ Removing both the PNG metadata and the external sidecar is irreversible.
 The existing nodes remain read-only; only Save Image + Sidecar writes new
 output images. This node doesn't modify input images.
 
+## Persistent protection masks: save and resume later
+
+The existing **Image Utils · Save Image + Sidecar (Embedded)** node now has
+an **optional `protection_mask: MASK` input**. Connect the accumulated
+`protect_mask` output from **LC Pipe Out** (not an individual detailer's
+per-stage MASK) to save the protection regions built up by all previous
+LoneCat / MR pipe detailers.
+
+For a saved image named `detailer_00001_.png`, the three companion records are:
+
+```text
+detailer_00001_.png             ← rendered image + embedded sidecar JSON
+detailer_00001_.sidecar         ← editable JSON provenance, prompts, controls
+detailer_00001_.protection_mask ← accumulated mask (lossless binary)
+```
+
+The `.protection_mask` file is a **compressed NPZ archive with a custom
+extension**, containing a single **float32 (H,W) mask** and format version,
+not a PNG or plain-text JSON. This preserves mask strengths and soft
+feathered edges without the quantization of an 8-bit image. A batch of
+images saves **one matching mask per output image**. Batch size and spatial
+dimensions must match the saved images; mismatches fail instead of
+silently broadcasting a mask onto the wrong image. Without an attached
+mask, the Save node's original PNG + JSON behavior is unchanged.
+
+### Save the accumulated mask
+
+```text
+Final MR Lazy Detailer ── LC_PIPE ─────► LC Pipe Out
+                                           │           │
+                                      IMAGE│           │protect_mask
+                                           │           │
+                                           ▼           ▼
+                                    Save Image + Sidecar (Embedded)
+                                           ▲
+                                           │sidecar_json (as before)
+```
+
+Saving an explicit protection mask also records its companion filename in
+the saved JSON's `image-save` history entry. **The mask itself is stored
+only in the binary companion file**: PNG embedded metadata backs up the
+JSON sidecar, not the protection mask. Transfer all three files if moving
+to another machine or GPU pod.
+
+### Read the mask and place it back in an LC pipe
+
+Add **MR Load Protection Into Pipe** under
+**Image Utils / MR Lazy Detailers**. Connect the current loaded image
+and its **full filename STRING** from Sequential Image Loader:
+
+```text
+Sequential Image Loader ── file_path ────────────────────┐
+                         IMAGE ────────────────────┐     │
+                                                  ▼     ▼
+Existing LC Pipe (in/edit) ── LC_PIPE (optional) ─► MR Load Protection Into Pipe
+                                                           │
+                                                           ├─ LC_PIPE → next MR Lazy Detailer
+                                                           ├─ MASK    → optional mask preview
+                                                           └─ found   → BOOLEAN
+```
+
+The loader reads `<stem>.protection_mask` (or the unambiguous
+`<image filename>.protection_mask` variant). It attaches the saved mask
+under `lc_protect` and calculates a **new LoneCat image fingerprint for
+the current loaded IMAGE**. This is necessary because a saved 8-bit PNG
+may have slightly different pixel values from the in-memory IMAGE that
+was originally detailed. The stored mask is not altered.
+
+You can pass an **optional existing LC_PIPE** to preserve your model, VAE,
+conditioning, seed and sampler settings. Without it, the node creates a
+minimal pipe holding just the image and protection; downstream detailers
+still need their required sampling/model settings from an earlier LC Pipe.
+When replacing a pipe's image, the node clears old cached `lc_found`
+SAM3 detections. Existing protection in the input pipe is **replaced by
+the saved mask**, rather than accidentally mixing protection from
+different processing sessions.
+
+The loader's **missing_policy** defaults to `error` to avoid silently
+losing protections. Select `empty` only if a mixed folder intentionally
+contains some images without mask companions: then `found=false` and the
+pipe carries no protection for those images. Read and restore are
+single-image operations because each companion belongs to one saved
+image; feed one image at a time when iterating a folder.
+
+Mask restore requires the same image geometry and spatial alignment.
+Resizing, cropping, or moving features after saving would need a
+corresponding mask transform; this loader intentionally refuses
+dimension mismatches instead of retagging a misaligned mask.
+
 ## Operational notes
 
 - The reader looks for files on the **ComfyUI backend's filesystem**. If ComfyUI runs on a GPU pod, you must copy the images and matching sidecars to that pod.
