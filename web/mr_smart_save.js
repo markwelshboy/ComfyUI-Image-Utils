@@ -6,6 +6,124 @@
  */
 import { app } from "../../scripts/app.js";
 
+// ComfyUI historically saved widgets_values by position. Adding widgets (or
+// converting one into an input) could silently shift values on load. Preserve a
+// named snapshot alongside the standard ComfyUI data, without changing widget
+// positions or adding serializable fields. Recent frontends also provide
+// widgets_values_named; older frontends use our node.properties fallback.
+const SAVER_SNAPSHOT_KEY = "mr_smart_save_named_values";
+const SAVER_SNAPSHOT_VERSION = 1;
+const SAVER_FIELDS = [
+  "filename_prefix", "include_current_workflow_in_history", "source_name",
+  "filename_template", "output_directory", "stage", "tracking_id",
+  "counter_padding", "counter_start", "collision_policy", "seed",
+  "negative_prompt", "model_name", "settings_json",
+];
+const SAVER_DEFAULTS = Object.freeze({
+  source_name: "", output_directory: "", stage: "detailer-pipe",
+  tracking_id: "", counter_padding: 4, counter_start: 0,
+  collision_policy: "append_revision", seed: -1,
+  negative_prompt: "", model_name: "", settings_json: "{}",
+});
+const SAVER_REPAIR_FIELDS = Object.keys(SAVER_DEFAULTS);
+const SAVER_COLLISION_OPTIONS = ["append_revision","error","increment_counter"];
+
+function saverValid(name, value) {
+  if (["filename_prefix", "source_name", "filename_template",
+       "output_directory", "stage", "model_name", "negative_prompt"].includes(name))
+    return typeof value === "string" && (name !== "stage" || !!value.trim());
+  if (name === "tracking_id")
+    return typeof value === "string" && (!value || /^\d{1,16}$/.test(value));
+  if (name === "include_current_workflow_in_history") return typeof value === "boolean";
+  if (name === "counter_padding")
+    return Number.isSafeInteger(value) && value >= 1 && value <= 12;
+  if (name === "counter_start")
+    return Number.isSafeInteger(value) && value >= 0 && value <= 999999999;
+  if (name === "seed")
+    return Number.isSafeInteger(value) && value >= -1;
+  if (name === "collision_policy") return SAVER_COLLISION_OPTIONS.includes(value);
+  if (name === "settings_json") {
+    if (typeof value !== "string") return false;
+    try { return JSON.parse(value || "{}") instanceof Object &&
+                 !Array.isArray(JSON.parse(value || "{}")); }
+    catch { return false; }
+  }
+  return false;
+}
+
+function saverNamedValues(node) {
+  const values = {};
+  for (const name of SAVER_FIELDS) {
+    const widget = findWidget(node, name);
+    if (widget && widget.serialize !== false && saverValid(name, widget.value))
+      values[name] = widget.value;
+  }
+  return values;
+}
+function saverIssues(node) {
+  const bad = SAVER_FIELDS.filter(name => {
+    const widget = findWidget(node, name);
+    return widget && widget.serialize !== false && !saverValid(name,widget.value);
+  });
+  // Common legacy shift: stage ended up in the output folder, tracking ID
+  // received counter padding, counter padding received counter start, etc.
+  // Other fields may still look valid; never guess their intended values.
+  return bad;
+}
+function saverRestoreNamed(node, data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return [];
+  const restored = [];
+  for (const name of SAVER_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(data, name)) continue;
+    const widget = findWidget(node, name);
+    if (!widget || widget.serialize === false || !saverValid(name,data[name])) continue;
+    widget.value = data[name];
+    restored.push(name);
+  }
+  return restored;
+}
+
+function saverApplyRepair(node) {
+  for (const name of SAVER_REPAIR_FIELDS) {
+    const widget = findWidget(node,name);
+    if (!widget) continue; // Connected widgets are controlled by the graph.
+    widget.value = SAVER_DEFAULTS[name];
+    widget.callback?.(widget.value);
+  }
+  node.__mrSmartSaveLegacy = false;
+  node.__mrSmartSaveReviewNote = "Advanced fields reset. Check the output directory, " +
+    "stage and tracking ID before queuing; save the workflow to store values by name.";
+  node.__mrSmartSaveRefresh?.();
+  node.setDirtyCanvas?.(true,true);
+}
+
+// Textarea widgets don't render their names in ComfyUI's canvas. Put a
+// persistent, legible heading inside each existing textarea, above its actual
+// content, WITHOUT inserting extra widgets (which could shift old workflows).
+function saverLabelTextarea(node, name, title, placeholder) {
+  const widget = findWidget(node,name);
+  const input = widget?.element ?? widget?.inputEl;
+  if (!input || typeof input.setAttribute !== "function") return false;
+  input.setAttribute("aria-label",title);
+  input.setAttribute("title",title);
+  input.setAttribute("placeholder",placeholder);
+  // Static SVG CSS background keeps the label visible even for settings_json
+  // whose default value is {}. No new widget or content is serialized.
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg" width="355" height="25">' +
+    '<text x="5" y="17" fill="#edb979" font-size="12" ' +
+    'font-family="Arial, sans-serif" font-weight="bold">' + title + '</text></svg>';
+  const style=input.style;
+  if (style) {
+    style.backgroundImage = "url('data:image/svg+xml," + encodeURIComponent(svg) + "')";
+    style.backgroundRepeat = "no-repeat";
+    style.backgroundPosition = "8px 4px";
+    style.backgroundSize = "auto 25px";
+    style.paddingTop = "32px";
+    style.boxSizing = "border-box";
+  }
+  return true;
+}
+
 const TOKENS = [
   ["Filename prefix", "%prefix%"],
   ["Input name", "%input_name%"],
