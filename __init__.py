@@ -284,7 +284,9 @@ class ImageUtilsSaveImageWithSidecar:
             folder.mkdir(parents=True, exist_ok=True)
 
         results, filenames = [], []
-        count = int(images.shape[0])
+        # Torch IMAGE batches expose shape[0]. Test/legacy iterable wrappers
+        # may expose only iteration, so keep those older callers working.
+        count = int(images.shape[0]) if hasattr(images, "shape") else sum(1 for _ in images)
         for batch_number, image in enumerate(images):
             if advanced:
                 file, assigned_id, output_counter, revision = allocate_save_name(
@@ -310,9 +312,10 @@ class ImageUtilsSaveImageWithSidecar:
             origin = doc.setdefault("origin", {})
             # Once an origin has a tracking identifier, never overwrite it
             # because a later output filename happens to contain a different number.
-            origin.setdefault("tracking_id", assigned_id)
-            origin.setdefault("source_filename", (Path(source_name.replace("\\", "/")).name
-                                                  if source_name else file))
+            if advanced or sidecar_json is None:
+                origin.setdefault("tracking_id", assigned_id)
+                origin.setdefault("source_filename", (Path(source_name.replace("\\", "/")).name
+                                                      if source_name else file))
             event = {
                 "stage": "image-save",
                 "processing_stage": stage,
@@ -320,7 +323,7 @@ class ImageUtilsSaveImageWithSidecar:
                 "input_filename": source_name or None,
                 "output_filename": file,
                 "output_directory": str(folder),
-                "tracking_id": origin["tracking_id"],
+                "tracking_id": origin.get("tracking_id", assigned_id),
                 "output_counter": output_counter,
                 "revision": revision,
             }
