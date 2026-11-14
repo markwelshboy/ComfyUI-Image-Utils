@@ -112,6 +112,10 @@ class SmartSaverTests(unittest.TestCase):
         self.assertEqual(item["filename"], filename)
         path = self.output / filename
         self.assertEqual(result["ui"]["mr_saved_paths"][0], str(path))
+        self.assertEqual(result["ui"]["mr_saved_previews"], [{
+            "filename": filename, "subfolder": "", "type": "output",
+            "preview_available": True, "display_path": str(path)
+        }])
         sidecar = json.loads(path.with_suffix(".sidecar").read_text())
         with Image.open(path) as png:
             self.assertEqual(json.loads(png.info["image_sidecar"]), sidecar)
@@ -231,6 +235,10 @@ class SmartSaverTests(unittest.TestCase):
             result = self.save(self.init(), output_directory=str(external))
         self.assertEqual(Path(result["ui"]["mr_saved_paths"][0]).parent, external)
         self.assertEqual(result["ui"]["images"], [])
+        self.assertEqual(len(result["ui"]["mr_saved_previews"]), 1)
+        self.assertFalse(result["ui"]["mr_saved_previews"][0]["preview_available"])
+        self.assertEqual(result["ui"]["mr_saved_previews"][0]["display_path"],
+                         result["ui"]["mr_saved_paths"][0])
 
     def test_batch_outputs_unique_names_and_tracking(self):
         result = self.save(self.init(), count=3)
