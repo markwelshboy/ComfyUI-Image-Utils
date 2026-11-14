@@ -9,6 +9,7 @@ import { app } from "../../scripts/app.js";
 const TOKENS = [
   ["Input name", "%input_name%"],
   ["Tracked count", "%tracked_count%"],
+  ["Aligned count", "%aligned_counter%"],
   ["Output counter", "%counter%"],
   ["Seed", "%seed%"],
   ["Date", "%date%"],
@@ -36,6 +37,7 @@ function templatePreview(node) {
   const values = {
     input_name: rawName,
     tracked_count: tracked.padStart(pad,"0"),
+    aligned_counter: tracked.padStart(pad,"0"),
     counter: String(Number(field("counter_start")) || 0).padStart(pad,"0"),
     seed: Number(field("seed")) >= 0 ? String(field("seed")) : "unknown",
     date,time,batch:"000",stage:String(field("stage") || "processed"),
