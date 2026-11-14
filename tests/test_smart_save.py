@@ -152,6 +152,24 @@ class SmartSaverTests(unittest.TestCase):
         self.assertEqual(doc["origin"]["tracking_id"], "0024")
         self.assertEqual(doc["origin"]["source_filename"], "original_0024.png")
 
+    def test_filename_aligned_counter_is_independent_of_immutable_lineage(self):
+        original = self.init()
+        original["origin"]["tracking_id"] = "0001"
+        original["origin"]["source_filename"] = "generated_0001.png"
+        result = self.save(
+            original,
+            source_name="curated_set_0087.png",
+            filename_template="%input_name%_%stage%_%aligned_counter%")
+        file = Path(result["ui"]["mr_saved_paths"][0])
+        self.assertEqual(
+            file.name,
+            "curated_set_0087_after_detailer_pipe_and_upscaled_0087.png")
+        saved = json.loads(file.with_suffix(".sidecar").read_text())
+        self.assertEqual(saved["origin"]["tracking_id"], "0001")
+        self.assertEqual(saved["history"][-1]["tracking_id"], "0001")
+        with self.assertRaisesRegex(ValueError, "immutable"):
+            self.save(original, source_name="curated_set_0087.png", tracking_id="0087")
+
     def test_source_without_counter_uses_sequential_ids(self):
         opts = {"source_name": "untagged.png",
                 "filename_template": "%input_name%_%tracked_count%"}
