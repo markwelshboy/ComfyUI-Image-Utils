@@ -284,7 +284,7 @@ class ImageUtilsSaveImageWithSidecar:
             folder.mkdir(parents=True, exist_ok=True)
 
         results, filenames = [], []
-        count = len(images)
+        count = int(images.shape[0])
         for batch_number, image in enumerate(images):
             if advanced:
                 file, assigned_id, output_counter, revision = allocate_save_name(
