@@ -135,7 +135,7 @@ assert.match(damaged.previewRoot.children.at(-2).textContent,/output_directory/)
 const corrupt={properties:{}};
 damaged.onSerialize(corrupt);
 assert.equal(corrupt.properties.mr_smart_save_named_values.needs_review,true);
-repair.click();
+damaged.previewRoot.children.at(-1).click();
 for(const [field,expected] of Object.entries({
  output_directory:"",stage:"detailer-pipe",tracking_id:"",
  counter_padding:4,counter_start:0,collision_policy:"append_revision",
