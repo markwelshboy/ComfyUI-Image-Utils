@@ -85,13 +85,15 @@ def source_counter(source_name):
 
 def read_tracking(doc, source_name="", explicit=""):
     """Sidecar ID > filename; explicit input wins. Never silently renumber."""
+    origin = doc.get("origin", {}) if isinstance(doc, dict) else {}
+    stored = origin.get("tracking_id") if isinstance(origin, dict) else None
     if explicit is not None and str(explicit).strip():
         result = str(explicit).strip()
+        if stored is not None and str(stored) != result:
+            raise ValueError("An existing origin.tracking_id is immutable; "
+                             "the explicit tracking_id conflicts with the saved image.")
     else:
-        origin = doc.get("origin", {}) if isinstance(doc, dict) else {}
-        result = origin.get("tracking_id") if isinstance(origin, dict) else None
-        if result is None:
-            result = source_counter(source_name)
+        result = stored if stored is not None else source_counter(source_name)
     if result is not None and not VALID_TRACKING.fullmatch(str(result)):
         raise ValueError("Tracking ID must be 1–16 digits.")
     return str(result) if result is not None else None
@@ -213,6 +215,10 @@ def allocate_save_name(folder, template, *, source_name="", tracked_count=None,
         if collision_policy == "error":
             raise FileExistsError("Image, sidecar or protection mask already exists: " + str(Path(folder) / candidate))
         if collision_policy == "append_revision":
+            if not fixed_tracking and ("%tracked_count%" in template or "%counter%" in template):
+                # Newly generated images without a source ID should allocate
+                # consecutive IDs, not multiple revisions of ID 0000.
+                continue
             for revision in range(2, MAX_ATTEMPTS):
                 candidate = f"{stem}_v{revision:02d}.png"
                 if not companions_exist(folder, candidate, reserved):
