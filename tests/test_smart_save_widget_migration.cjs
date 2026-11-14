@@ -27,8 +27,31 @@ const ctx=vm.createContext({
   }},
   Date,Math,JSON,Object,Number,Array,Set,String,RegExp,
 });
-const script=source.replace('import { app } from "../../scripts/app.js";',
-                            "const app=globalThis.__app;");
+ctx.__api={apiURL:path=>path};
+ctx.__buildSaverUI=(node,api,opts)=>{
+  const root=ctx.document.createElement("div");
+  for(let i=0;i<7;i++)root.append(ctx.document.createElement("div"));
+  const warning=root.children.at(-2),repair=root.children.at(-1);
+  repair.addEventListener("click",()=>{opts.repair(node);refresh();});
+  const refresh=()=>{
+    const bad=opts.issues(node);
+    warning.hidden=bad.length===0&&!node.__mrSmartSaveNeedsReview&&!node.__mrSmartSaveLegacy&&!node.__mrSmartSaveReviewNote;
+    warning.textContent="Invalid: "+bad.join(", ")+" output_directory";
+    repair.hidden=bad.length===0&&!node.__mrSmartSaveNeedsReview;
+  };
+  const widget=node.addDOMWidget("mr_filename_preview","MR_FILENAME_PREVIEW",root,{serialize:false});
+  widget.serialize=false;
+  refresh();
+  return {root,last:root.children[1],refresh,applyStoredPrefs:refresh,
+    updatePreview:()=>{},close:()=>{}};
+};
+const script=source
+  .replace('import { app } from "../../scripts/app.js";',
+           "const app=globalThis.__app;")
+  .replace('import { api } from "../../scripts/api.js";',
+           "const api=globalThis.__api;")
+  .replace('import { buildSaverUI } from "./mr_smart_save_compact.js";',
+           "const buildSaverUI=globalThis.__buildSaverUI;");
 vm.runInContext(script,ctx);
 assert.ok(extension,"Smart Save extension must register");
 
