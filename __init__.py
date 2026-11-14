@@ -157,13 +157,19 @@ class ImageUtilsSaveImageWithSidecar:
             "sidecar_json": ("STRING", {"forceInput": True}),
             "filename_prefix": ("STRING", {"default": "ImageUtils"}),
             "include_current_workflow_in_history": ("BOOLEAN", {"default": True}),
+        }, "optional": {
+            "protection_mask": ("MASK", {
+                "tooltip": "Optional accumulated protection mask from LC Pipe Out. "
+                           "Saves one lossless <image>.protection_mask companion "
+                           "beside each PNG and .sidecar."
+            }),
         }, "hidden": {
             "prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO",
         }}
 
     def save_images(self, images, sidecar_json, filename_prefix="ImageUtils",
                     include_current_workflow_in_history=True,
-                    prompt=None, extra_pnginfo=None):
+                    prompt=None, extra_pnginfo=None, protection_mask=None):
         import copy
         import json
         import os
@@ -173,7 +179,11 @@ class ImageUtilsSaveImageWithSidecar:
         import numpy as np
         from PIL import Image, PngImagePlugin
         import folder_paths
+        from .protection_mask import masks_for_save, write_protection_file
 
+        # Validate the entire mask batch before saving any output files.
+        # One exact-size mask is persisted per saved image; no broadcasting.
+        prepared_masks = masks_for_save(protection_mask, tuple(images.shape))
         base = validate_document(load_document(sidecar_json))
         if prompt is not None and not isinstance(prompt, dict):
             raise ValueError("ComfyUI execution prompt must be a JSON object.")
@@ -186,6 +196,7 @@ class ImageUtilsSaveImageWithSidecar:
             file = f"{name}_{counter:05}_.png"
             target = Path(folder) / file
             sidecar = target.with_suffix(".sidecar")
+            mask_target = target.with_suffix(".protection_mask") if prepared_masks is not None else None
             # Preserve original provenance; only append to processing history.
             doc = copy.deepcopy(base)
             history = doc.setdefault("history", [])
@@ -194,6 +205,8 @@ class ImageUtilsSaveImageWithSidecar:
                 "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "output_filename": file,
             }
+            if mask_target is not None:
+                event["protection_mask_file"] = mask_target.name
             if include_current_workflow_in_history:
                 if prompt is not None:
                     event["execution_graph"] = prompt
@@ -204,8 +217,8 @@ class ImageUtilsSaveImageWithSidecar:
             if len(content.encode("utf-8")) > 16 * 1024 * 1024:
                 raise ValueError("Lifetime sidecar record exceeds 16 MiB.")
             # Do not overwrite existing images/sidecars during batch saves.
-            if target.exists() or sidecar.exists():
-                raise FileExistsError("Image or sidecar already exists: " + str(target))
+            if target.exists() or sidecar.exists() or (mask_target is not None and mask_target.exists()):
+                raise FileExistsError("Image, sidecar or protection mask already exists: " + str(target))
             raw = np.clip(image.detach().cpu().numpy() * 255.0, 0, 255).astype(np.uint8)
             output = Image.fromarray(raw)
             metadata = PngImagePlugin.PngInfo()
@@ -220,20 +233,28 @@ class ImageUtilsSaveImageWithSidecar:
             folder_path = Path(folder)
             temp_png = folder_path / ("." + uuid.uuid4().hex + ".png")
             temp_sidecar = folder_path / ("." + uuid.uuid4().hex + ".sidecar")
+            temp_mask = folder_path / ("." + uuid.uuid4().hex + ".protection_mask") if mask_target else None
+            staged = [(temp_png, target), (temp_sidecar, sidecar)]
+            if mask_target is not None:
+                staged.append((temp_mask, mask_target))
+            committed = []
             try:
                 output.save(temp_png, pnginfo=metadata, compress_level=4)
                 temp_sidecar.write_text(
                     json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                # If either operation fails, never leave an unpaired output.
-                os.replace(temp_png, target)
-                try:
-                    os.replace(temp_sidecar, sidecar)
-                except Exception:
-                    target.unlink(missing_ok=True)
-                    raise
+                if mask_target is not None:
+                    write_protection_file(temp_mask, prepared_masks[batch_number])
+                # Roll back all companions for this frame on any failure.
+                for temporary, destination in staged:
+                    os.replace(temporary, destination)
+                    committed.append(destination)
+            except Exception:
+                for destination in reversed(committed):
+                    destination.unlink(missing_ok=True)
+                raise
             finally:
-                temp_png.unlink(missing_ok=True)
-                temp_sidecar.unlink(missing_ok=True)
+                for temporary, _ in staged:
+                    temporary.unlink(missing_ok=True)
             results.append({"filename": file, "subfolder": subfolder, "type": "output"})
             counter += 1
         return {"ui": {"images": results}}
@@ -410,6 +431,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
 from .mr_lazy_lc import MRLazySmartDetailerPipe, MRLazyCharacterDetailerPipe
 from .mr_diagnostics import MRInlineVRAMClear, MRConditionalPreviewSink
 from .mr_pipe_image_replace import MRPipeImageReplaceProtect
+from .mr_protection_restore import MRLoadProtectionIntoPipe
 
 NODE_CLASS_MAPPINGS.update({
     "ImageUtilsMRLazySmartDetailerPipe": MRLazySmartDetailerPipe,
@@ -417,6 +439,7 @@ NODE_CLASS_MAPPINGS.update({
     "ImageUtilsMRInlineVRAMClear": MRInlineVRAMClear,
     "ImageUtilsMRConditionalPreviewSink": MRConditionalPreviewSink,
     "ImageUtilsMRPipeImageReplaceProtect": MRPipeImageReplaceProtect,
+    "ImageUtilsMRLoadProtectionIntoPipe": MRLoadProtectionIntoPipe,
 })
 NODE_DISPLAY_NAME_MAPPINGS.update({
     "ImageUtilsMRLazySmartDetailerPipe": "MR Lazy Smart Detailer (pipe)",
@@ -424,5 +447,6 @@ NODE_DISPLAY_NAME_MAPPINGS.update({
     "ImageUtilsMRInlineVRAMClear": "MR VRAM Cache Clear (Inline)",
     "ImageUtilsMRConditionalPreviewSink": "MR Conditional Preview Sink",
     "ImageUtilsMRPipeImageReplaceProtect": "MR Pipe Image Replace (Preserve Protection)",
+    "ImageUtilsMRLoadProtectionIntoPipe": "MR Load Protection Into Pipe",
 })
 WEB_DIRECTORY = "./web"
