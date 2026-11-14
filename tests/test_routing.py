@@ -46,7 +46,7 @@ class RoutingTests(unittest.TestCase):
 
     def test_node_registration_and_types(self):
         registry = self.pack.NODE_CLASS_MAPPINGS
-        self.assertEqual(len(registry), 15)
+        self.assertEqual(len(registry), 16)
         for name in ("ImageUtilsLazyImageBypass", "ImageUtilsTagPromptSelector",
                      "ImageUtilsInlineImagePreview", "ImageUtilsInlineCropPreview"):
             self.assertIn(name, registry)
