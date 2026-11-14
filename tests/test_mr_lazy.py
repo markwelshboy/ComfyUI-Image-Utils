@@ -76,7 +76,7 @@ class MRTests(unittest.TestCase):
 
     def test_registration_and_non_output_detailers(self):
         reg = self.pack.NODE_CLASS_MAPPINGS
-        self.assertEqual(len(reg), 17)
+        self.assertEqual(len(reg), 18)
         for name in ("ImageUtilsMRLazySmartDetailerPipe",
                      "ImageUtilsMRLazyCharacterDetailerPipe"):
             cls = reg[name]
