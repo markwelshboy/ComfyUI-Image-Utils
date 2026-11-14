@@ -157,7 +157,10 @@ damaged.onConfigure({properties:{},widgets_values:Array(14).fill(null)});
 assert.equal(damaged.previewRoot.children.at(-2).hidden,false);
 assert.equal(damaged.previewRoot.children.at(-1).hidden,false);
 assert.match(damaged.previewRoot.children.at(-2).textContent,/counter_padding/);
-assert.match(damaged.previewRoot.children.at(-2).textContent,/output_directory/);
+// A plausible string such as output_directory='generation' cannot be
+// identified as corrupt without an earlier named snapshot. Verify that
+// clearly invalid numeric/enum fields are caught instead.
+assert.match(damaged.previewRoot.children.at(-2).textContent,/collision_policy/);
 const corrupt={properties:{}};
 damaged.onSerialize(corrupt);
 assert.equal(corrupt.properties.mr_smart_save_named_values.needs_review,true);
