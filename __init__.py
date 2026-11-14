@@ -372,7 +372,7 @@ class ImageUtilsSaveImageWithSidecar:
             folder = Path(folder)
             folder.mkdir(parents=True, exist_ok=True)
 
-        results, filenames = [], []
+        results, filenames, previews = [], [], []
         # Torch IMAGE batches expose shape[0]. Test/legacy iterable wrappers
         # may expose only iteration, so keep those older callers working.
         count = int(images.shape[0]) if hasattr(images, "shape") else sum(1 for _ in images)
@@ -473,9 +473,35 @@ class ImageUtilsSaveImageWithSidecar:
                     temporary.unlink(missing_ok=True)
 
             if Path(folder).is_relative_to(Path(self.output_dir).resolve()):
-                results.append({"filename": file, "subfolder": subfolder, "type": "output"})
+                reference = {"filename": file, "subfolder": subfolder, "type": "output"}
+                results.append(reference)
+                previews.append({**reference, "available": True,
+                                 "display_path": str(target)})
+            else:
+                # ComfyUI's /view route cannot read arbitrary trusted output
+                # directories. Use a bounded preview in ComfyUI's temporary
+                # directory instead of exposing a raw filesystem path.
+                preview = {"available": False, "display_path": str(target)}
+                try:
+                    get_temp = getattr(folder_paths, "get_temp_directory", None)
+                    if callable(get_temp):
+                        temp_root = Path(get_temp())
+                        temp_root.mkdir(parents=True, exist_ok=True)
+                        temp_name = "mr_saver_preview_" + uuid.uuid4().hex + ".png"
+                        thumbnail = output.copy()
+                        thumbnail.thumbnail((1024, 1024))
+                        thumbnail.save(temp_root / temp_name, format="PNG")
+                        preview.update({"filename": temp_name,
+                                        "subfolder": "", "type": "temp",
+                                        "available": True})
+                except (OSError, ValueError):
+                    # The final image and its sidecar have already been saved.
+                    # A failed optional thumbnail must not fail the save.
+                    pass
+                previews.append(preview)
             filenames.append(str(target))
-        return {"ui": {"images": results, "mr_saved_paths": filenames}}
+        return {"ui": {"images": results, "mr_saved_paths": filenames,
+                       "mr_saved_preview": previews}}
 
 
 class ImageUtilsLazyImageBypass:
