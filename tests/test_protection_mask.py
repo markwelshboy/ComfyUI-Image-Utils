@@ -107,7 +107,7 @@ class ProtectionMaskTests(unittest.TestCase):
             self.assertTrue(path.exists())
             self.assertTrue(sidecar.exists())
             self.assertTrue(companion.exists())
-            self.assertEqual(companion.read_bytes()[:4], b"PK\\x03\\x04")
+            self.assertEqual(companion.read_bytes()[:4], b"PK\x03\x04")
             from_name = self.pack.ImageUtilsSidecarLoader().load(str(path))
             self.assertTrue(from_name[1])
             doc = json.loads(from_name[0])
@@ -255,7 +255,7 @@ class ProtectionMaskTests(unittest.TestCase):
         companion = name.with_suffix(".protection_mask")
         companion.write_bytes(b"not a zip")
         self.assertNotEqual(module.protection_signature(name), missing_sig)
-        with self.assertRaises((ValueError, Exception)):
+        with self.assertRaises(ValueError):
             module.read_protection_file(name)
 
 
