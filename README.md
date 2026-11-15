@@ -388,6 +388,19 @@ illustrative: **Last save** displays the actual resolved path returned by
 the backend after execution. As with other ComfyUI DOM widgets, a frontend
 restart/refresh may be needed after upgrading the extension.
 
+**Optional seed in the saver:** The saver never generates or changes image pixels.
+Its `seed` input is only used to record the actual upstream generation seed when
+initializing a sidecar, or to expand `%seed%` in a filename template. With the
+default `-1`, it reuses `origin.generation.seed` from an incoming sidecar when
+available. If you already use **MR Sidecar Initialize (Generation)**, you normally
+do not need to connect the seed to the saver again.
+
+ComfyUI automatically creates a *control after generate* widget for integer
+inputs named `seed`. This is useful on **samplers** but not on a save node:
+the saver now explicitly disables that auto-control, and the compact frontend
+also hides the obsolete control if it is present in an older workflow.
+The seed's underlying input is kept for backward compatibility.
+
 ### Compact saver panel with permanent image preview
 
 **Image Utils · Save Image + Sidecar (Embedded)** now uses a compact
