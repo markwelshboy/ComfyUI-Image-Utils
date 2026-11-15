@@ -660,7 +660,7 @@ dimension mismatches instead of retagging a misaligned mask.
 
 - The reader looks for files on the **ComfyUI backend's filesystem**. If ComfyUI runs on a GPU pod, you must copy the images and matching sidecars to that pod.
 - Spaces and Unicode characters in image names work normally. Filenames are handled as file paths, not shell commands.
-- The reader's IS_CHANGED hook checks file content, so edited sidecars invalidate the cached node output.
+- The Image Sidecar Loader follows normal ComfyUI dependency caching. Loading a different image path refreshes its metadata; editing an existing sidecar at the same path does **not** automatically invalidate the cached result. This is intentional for immutable per-image sidecars, and avoids unnecessary re-execution of tag/prompt/detailer branches.
 - The loader, extractors, routing, and inline previews do not modify input images or sidecars.
 - A configurable **Add Output** node with dynamically typed sockets can be developed later. It requires synchronized Python/backend and JavaScript/frontend socket definitions to behave reliably with differing images.
 
