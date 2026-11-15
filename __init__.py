@@ -8,7 +8,7 @@ This package deliberately has no frontend-JavaScript/socket monkeypatching.
 Its output types are always stable when the JSON schema changes.
 """
 from .sidecar import (
-    read_sidecar, typed_field, has_tag, conditional_prompt, sidecar_signature,
+    read_sidecar, typed_field, has_tag, conditional_prompt,
     append_processing_event, validate_document, load_document
 )
 
@@ -28,10 +28,6 @@ class ImageUtilsSidecarLoader:
     RETURN_NAMES = ("json", "exists", "sidecar_path")
     FUNCTION = "load"
     CATEGORY = CATEGORY
-
-    @classmethod
-    def IS_CHANGED(cls, image_path):
-        return sidecar_signature(image_path)
 
     def load(self, image_path):
         import json
