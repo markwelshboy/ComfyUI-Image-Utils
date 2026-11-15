@@ -203,7 +203,11 @@ app.registerExtension({
         saverLabelTextarea(this,"settings_json","GENERATION SETTINGS · JSON",
           "Optional settings such as steps, sampler or denoise.");
         this.__mrSaverUI=buildSaverUI(this,api,{
-          field:findWidget,fieldNames:SAVER_FIELDS,tokens:TOKENS,
+          // Older saved workflows can still carry ComfyUI's companion
+          // control_after_generate widget. Hide that obsolete control too,
+          // but keep its saved position intact for legacy serialization.
+          field:findWidget,fieldNames:[...SAVER_FIELDS,"control_after_generate"],
+          tokens:TOKENS,
           estimateText:templatePreview,issues:saverIssues,
           repair:saverApplyRepair,
         });

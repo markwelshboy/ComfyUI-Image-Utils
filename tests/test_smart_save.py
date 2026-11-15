@@ -300,6 +300,18 @@ class SmartSaverTests(unittest.TestCase):
                 self.assertFalse(list(self.output.glob("*.png")))
                 self.assertFalse(list(self.output.glob("*.sidecar")))
 
+    def test_saver_seed_is_provenance_only_not_a_generation_control(self):
+        # ComfyUI auto-attaches "control after generate" to inputs named seed,
+        # unless explicitly disabled. The saver must not randomize metadata.
+        saver = self.pack.ImageUtilsSaveImageWithSidecar.INPUT_TYPES()["optional"]["seed"]
+        self.assertEqual(saver[0], "INT")
+        self.assertEqual(saver[1]["default"], -1)
+        self.assertIs(saver[1]["control_after_generate"], False)
+        self.assertIn("%seed%", saver[1]["tooltip"])
+        # The generator's initializer remains independent.
+        initial = self.pack.ImageUtilsSidecarInitialize.INPUT_TYPES()["optional"]["seed"]
+        self.assertNotIn("control_after_generate", initial[1])
+
     def test_generation_prompt_multiline_fields_are_explicitly_labeled(self):
         spec = self.pack.ImageUtilsSaveImageWithSidecar.INPUT_TYPES()
         negative = spec["optional"]["negative_prompt"][1]

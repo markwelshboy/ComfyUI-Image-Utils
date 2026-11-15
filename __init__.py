@@ -247,7 +247,17 @@ class ImageUtilsSaveImageWithSidecar:
             "counter_start": ("INT", {"default": 0, "min": 0, "max": 999999999}),
             "collision_policy": (["append_revision", "error", "increment_counter"], {
                 "default": "append_revision"}),
-            "seed": ("INT", {"default": -1, "min": -1, "max": 0xffffffffffffffff}),
+            "seed": ("INT", {
+                "default": -1, "min": -1, "max": 0xffffffffffffffff,
+                # A saver must never randomize its seed at queue time. ComfyUI
+                # otherwise auto-creates an orphan 'control after generate'
+                # widget simply because the optional input is called seed.
+                "control_after_generate": False,
+                "tooltip": "Optional original generation seed for sidecar provenance "
+                           "and filename token %seed%; -1 uses the sidecar's "
+                           "existing generation seed when available. Never "
+                           "changes image pixels or sampling."
+            }),
             "positive_prompt": ("STRING", {"forceInput": True,
                 "tooltip": "Optional resolved runtime prompt; used to initialize when no sidecar JSON is supplied."}),
             "negative_prompt": ("STRING", {
