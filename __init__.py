@@ -387,6 +387,28 @@ class ImageUtilsSaveImageWithSidecar:
             folder = Path(folder)
             folder.mkdir(parents=True, exist_ok=True)
 
+        # Keep a stable asset/variant identity while generating a unique
+        # artifact per saved image. This is what makes before/after matching
+        # reliable even after renaming, upscaling or multiple detailer runs.
+        source_lineage = base.get("lineage", {})
+        if not isinstance(source_lineage, dict):
+            raise ValueError("Sidecar lineage must be a JSON object.")
+        def lineage_id(value):
+            return (isinstance(value, str) and len(value) == 32
+                    and all(c in "0123456789abcdef" for c in value))
+        asset_id = source_lineage.get("asset_id")
+        if not lineage_id(asset_id):
+            asset_id = uuid.uuid4().hex
+        source_artifact_id = source_lineage.get("artifact_id")
+        if not lineage_id(source_artifact_id):
+            source_artifact_id = None
+        variant_id = source_lineage.get("variant_id")
+        if not lineage_id(variant_id):
+            variant = base.get("variant", {})
+            variant_id = (variant.get("id")
+                          if isinstance(variant, dict) and
+                          lineage_id(variant.get("id")) else None)
+        processing_run_id = uuid.uuid4().hex
         results, filenames, previews = [], [], []
         # Torch IMAGE batches expose shape[0]. Test/legacy iterable wrappers
         # may expose only iteration, so keep those older callers working.
@@ -414,6 +436,13 @@ class ImageUtilsSaveImageWithSidecar:
                 reserved.add(mask_target)
 
             doc = copy.deepcopy(base)
+            doc["lineage"] = {
+                "asset_id": asset_id,
+                "variant_id": variant_id,
+                "artifact_id": uuid.uuid4().hex,
+                "parent_artifact_id": source_artifact_id,
+                "processing_run_id": processing_run_id,
+            }
             origin = doc.setdefault("origin", {})
             # Once an origin has a tracking identifier, never overwrite it
             # because a later output filename happens to contain a different number.
@@ -429,6 +458,9 @@ class ImageUtilsSaveImageWithSidecar:
                 "output_filename": file,
                 "output_directory": str(folder),
                 "tracking_id": origin.get("tracking_id", assigned_id),
+                "source_artifact_id": source_artifact_id,
+                "output_artifact_id": doc["lineage"]["artifact_id"],
+                "processing_run_id": processing_run_id,
                 "output_counter": output_counter,
                 "revision": revision,
             }
