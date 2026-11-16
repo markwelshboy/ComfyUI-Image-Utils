@@ -128,6 +128,51 @@ class SmartSaverTests(unittest.TestCase):
         self.assertEqual(sidecar["history"][-1]["revision"], 1)
         self.assertEqual(source, original)
 
+    def test_lineage_is_preserved_across_processing_with_unique_child_artifacts(self):
+        original = self.init()
+        original["lineage"] = {
+            "asset_id": "a" * 32, "variant_id": "b" * 32,
+            "artifact_id": "c" * 32, "parent_artifact_id": None,
+            "processing_run_id": None,
+        }
+        original["variant"] = {"id": "b" * 32, "number": 2}
+        result = self.save(original, count=2)
+        saved = [json.loads(Path(name).with_suffix(".sidecar").read_text())
+                 for name in result["ui"]["mr_saved_paths"]]
+        self.assertEqual(len(saved), 2)
+        for item in saved:
+            lineage = item["lineage"]
+            self.assertEqual(lineage["asset_id"], "a" * 32)
+            self.assertEqual(lineage["variant_id"], "b" * 32)
+            self.assertEqual(lineage["parent_artifact_id"], "c" * 32)
+            self.assertEqual(len(lineage["artifact_id"]), 32)
+            self.assertNotEqual(lineage["artifact_id"], "c" * 32)
+            self.assertEqual(item["history"][-1]["output_artifact_id"],
+                             lineage["artifact_id"])
+            self.assertEqual(item["history"][-1]["processing_run_id"],
+                             lineage["processing_run_id"])
+            with Image.open(result["ui"]["mr_saved_paths"][saved.index(item)]) as image:
+                self.assertEqual(json.loads(image.info["image_sidecar"]), item)
+        self.assertNotEqual(saved[0]["lineage"]["artifact_id"],
+                            saved[1]["lineage"]["artifact_id"])
+        self.assertEqual(saved[0]["lineage"]["processing_run_id"],
+                         saved[1]["lineage"]["processing_run_id"])
+        # A subsequent pass points to the last saved artifact, not the original.
+        later = json.loads(Path(self.save(saved[0])["ui"]["mr_saved_paths"][0])
+                           .with_suffix(".sidecar").read_text())
+        self.assertEqual(later["lineage"]["parent_artifact_id"],
+                         saved[0]["lineage"]["artifact_id"])
+        self.assertEqual(later["lineage"]["asset_id"], "a" * 32)
+
+    def test_generation_save_without_sidecar_creates_original_lineage(self):
+        result = self.save(None, stage="generation")
+        doc = json.loads(Path(result["ui"]["mr_saved_paths"][0])
+                         .with_suffix(".sidecar").read_text())
+        self.assertEqual(len(doc["lineage"]["asset_id"]), 32)
+        self.assertEqual(len(doc["lineage"]["artifact_id"]), 32)
+        self.assertIsNone(doc["lineage"]["parent_artifact_id"])
+        self.assertIsNone(doc["lineage"]["variant_id"])
+
     def test_collision_allocates_revisions_without_overwriting_original(self):
         original = self.init()
         a = self.save(original)
