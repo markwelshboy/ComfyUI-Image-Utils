@@ -197,6 +197,45 @@ directory; the forwarded IMAGE is never resized or re-encoded. Set
 Preview Image, merely placing one of these inline nodes in a group does not
 create an independently requested output endpoint.
 
+## Image lineage for automatic before/after review
+
+Each **Save Image + Sidecar (Embedded)** output now records a stable
+`lineage` object inside both the external `.sidecar` and PNG
+`image_sidecar` metadata:
+
+```json
+{
+  "lineage": {
+    "asset_id": "4fa4b1cf4d5c46dbaadf60f469c7906c",
+    "variant_id": "c5ceea7c1b2b4fbc8d9875ee3cb1b346",
+    "artifact_id": "c8434a764fd545b9bb82b2d02d490e99",
+    "parent_artifact_id": "728f33cba3b04b59bdb0097f47c37b56",
+    "processing_run_id": "1dde43d7a5654f5ba49f48c219709fec"
+  }
+}
+```
+
+Values above are illustrative. `asset_id` identifies the original
+image for its lifetime, and `variant_id` identifies the independently
+configured Refine variant (null for the original). The new
+`artifact_id` uniquely identifies **this saved result**, while
+`parent_artifact_id` points to the input artifact. A batch shares one
+`processing_run_id` but gets distinct artifact IDs for each output.
+The original `origin` generation prompt/seed/workflow and prior
+`history` remain unchanged.
+
+When the saver receives a sidecar JSON with `lineage`, it keeps the
+asset and variant IDs and creates a new child artifact. This enables
+Image-Compare to match the *right* detailer or upscaler result even when
+the file is renamed. To use automatic review, **wire the corresponding
+incoming `sidecar_json` into the saver**; without that input, the
+saver must treat the output as a new asset, so older results fall back
+to conservative filename/history matching or manual pairing.
+
+For initial generation without a sidecar, the saver creates a new asset
+and artifact ID. Source-sidecar initialization in Image-Compare can
+also add missing lineage for older generated images before processing.
+
 ## AnyPaint masks from Image-Compare polygons
 
 **MR Sidecar Polygon Mask Extractor** appears under **Image Utils / Sidecars**.
