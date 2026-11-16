@@ -218,6 +218,58 @@ class SmartSaverTests(unittest.TestCase):
         self.assertEqual(doc["origin"]["tracking_id"], "0087")
         self.assertEqual(doc["origin"]["generation"]["settings"], {"denoise": 0.7})
 
+
+    def test_prompt_library_queue_sidecar_enriched_at_generation(self):
+        source = {
+            "version": 1, "tags": [], "controls": {},
+            "prompts": {"generation": {"positive": "Library prompt", "negative": ""}},
+            "origin": {
+                "generation": {"settings": {}},
+                "prompt_library": {
+                    "library": "Portraits", "group_id": "lighting",
+                    "group_name": "Lighting and Camera", "group_index": 5,
+                    "group_position": 6, "prompt_id": "light-7",
+                    "queue_index": 0, "queue_total": 20,
+                    "source_seed": 11, "source_width": 1024,
+                    "source_height": 1280, "aspect_ratio": "4:5",
+                },
+            },
+            "history": [],
+        }
+        original = json.loads(json.dumps(source))
+        result = self.save(
+            source, source_name="", stage="generation",
+            filename_template="%prefix%_%counter%", filename_prefix="Krea2",
+            seed=99, model_name="Krea 2", negative_prompt="blurry",
+            settings_json='{"steps": 10, "sampler": "euler"}')
+        path = Path(result["ui"]["mr_saved_paths"][0])
+        saved = json.loads(path.with_suffix(".sidecar").read_text())
+        with Image.open(path) as png:
+            self.assertEqual(json.loads(png.info["image_sidecar"]), saved)
+        self.assertEqual(saved["origin"]["prompt_library"], original["origin"]["prompt_library"])
+        self.assertEqual(saved["prompts"]["generation"]["positive"], "Library prompt")
+        self.assertEqual(saved["prompts"]["generation"]["negative"], "blurry")
+        self.assertEqual(saved["origin"]["generation"]["seed"], 99)
+        self.assertEqual(saved["origin"]["generation"]["model"], "Krea 2")
+        self.assertEqual(saved["origin"]["generation"]["settings"], {"steps": 10, "sampler": "euler"})
+        self.assertEqual(source, original)
+
+    def test_refinement_does_not_replace_generation_provenance(self):
+        original = self.init("Original generation", seed=42)
+        original["origin"]["prompt_library"] = {
+            "library": "Portraits", "group_id": "base", "prompt_id": "p-1",
+        }
+        result = self.save(
+            original, seed=888, positive_prompt="Eye refinement prompt",
+            model_name="Detailer", settings_json='{"steps":3}',
+            stage="eye-detailer")
+        saved = json.loads(Path(result["ui"]["mr_saved_paths"][0]).with_suffix(".sidecar").read_text())
+        self.assertEqual(saved["prompts"]["generation"]["positive"], "Original generation")
+        self.assertEqual(saved["origin"]["generation"]["seed"], 42)
+        self.assertEqual(saved["origin"]["generation"]["model"], "Krea 2")
+        self.assertEqual(saved["origin"]["generation"]["settings"], {"steps": 10})
+        self.assertEqual(saved["origin"]["prompt_library"]["prompt_id"], "p-1")
+
     def test_saver_returns_browser_image_metadata_for_output_folder(self):
         result = self.save(self.init(), output_directory="generation",
                            filename_template="%prefix%_%counter%",

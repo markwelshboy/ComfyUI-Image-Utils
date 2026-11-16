@@ -291,6 +291,34 @@ creates an empty but valid lifetime sidecar, without pretending to know the
 resolved prompt. If an existing JSON is supplied, its original generation
 prompt and provenance are preserved rather than overwritten by detailer text.
 
+
+### Sequential Prompt Library Queue (no Initialize node needed)
+
+The **📚 Prompt Library Queue** in ComfyUI-PromptLibrary emits a canonical
+`sidecar_json` for the *current* selected prompt, including
+`origin.prompt_library.library`, `group_name`, `group_id`,
+`group_index` (zero-based), `group_position` (one-based), stable
+`prompt_id`, and the queue index/total. Imported source metadata is
+also preserved when present.
+
+Connect its single `prompt` output to the generation text encoder and
+its `sidecar_json` output **directly** to
+**Image Utils · Save Image + Sidecar (Embedded)**. You can remove
+**MR Sidecar Initialize (Generation)** from this new-generation flow.
+Set the save node's `stage` to **generation**, and connect the actual
+sampler seed to the saver's `seed` input (do not assume the Prompt Library
+`source_seed` is the sampler's seed). Supply `positive_prompt` only if
+the final prompt differs from the queue output; model, negative and
+generation settings are optional.
+
+For a generation-stage Prompt Library sidecar, the saver merges actual
+runtime seed, model, negative prompt and supplied settings into
+`origin.generation` / `prompts.generation`, without replacing
+`origin.prompt_library`. Missing optional values do not clear fields.
+Subsequent detail/refinement saves should use a non-generation `stage`
+and an existing sidecar: the original generation provenance remains
+unchanged and processing history is appended.
+
 ### Intelligent filenames for generation and detailer output
 
 The existing **Image Utils · Save Image + Sidecar (Embedded)** node has

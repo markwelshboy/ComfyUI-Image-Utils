@@ -354,6 +354,15 @@ class ImageUtilsSaveImageWithSidecar:
             raise ValueError("Sidecar 'origin' must be a JSON object.")
         if not isinstance(stage, str) or not stage.strip():
             raise ValueError("Processing stage must be a nonempty STRING.")
+        # A fresh Prompt Library Queue sidecar already contains its exact
+        # resolved prompt, group and stable ID. Only at the generation stage
+        # merge actual sampler/model settings without overwriting provenance.
+        # Refinement stages must keep the original generation record intact.
+        if stage.strip() == "generation" and "prompt_library" in base.get("origin", {}):
+            from .save_naming import enrich_generation_document
+            base = enrich_generation_document(
+                base, positive_prompt=positive_prompt, negative_prompt=negative_prompt,
+                seed=seed, model_name=model_name, settings_json=settings_json)
 
         original = base.get("origin", {})
         source_name = str(source_name or original.get("source_filename") or "")

@@ -55,6 +55,57 @@ def new_generation_document(positive_prompt, negative_prompt="", seed=-1,
     return record
 
 
+
+def enrich_generation_document(document, *, positive_prompt=None, negative_prompt="",
+                               seed=-1, model_name="", settings_json="{}"):
+    """Merge *actual* generation inputs into an existing canonical sidecar.
+
+    Unlike a new document, this preserves frozen Prompt Library group/ID
+    provenance, imported-source metadata, tags, controls and history.
+    Empty optional inputs do not erase values already in the record.
+    """
+    updated = copy.deepcopy(document)
+    origin = updated.setdefault("origin", {})
+    if not isinstance(origin, dict):
+        raise ValueError("Sidecar origin must be an object.")
+    generation = origin.setdefault("generation", {})
+    if not isinstance(generation, dict):
+        raise ValueError("Sidecar origin.generation must be an object.")
+    prompts = updated.setdefault("prompts", {})
+    if not isinstance(prompts, dict):
+        raise ValueError("Sidecar prompts must be an object.")
+    texts = prompts.setdefault("generation", {})
+    if not isinstance(texts, dict):
+        raise ValueError("Sidecar prompts.generation must be an object.")
+    if positive_prompt is not None:
+        if not isinstance(positive_prompt, str):
+            raise ValueError("positive_prompt must be a STRING.")
+        texts["positive"] = positive_prompt
+    if not isinstance(negative_prompt, str):
+        raise ValueError("negative_prompt must be a STRING.")
+    if negative_prompt:
+        texts["negative"] = negative_prompt
+    if type(seed) is not int or seed < -1 or seed > 0xffffffffffffffff:
+        raise ValueError("seed must be a nonnegative integer or -1 when unknown.")
+    if seed >= 0:
+        generation["seed"] = seed
+    if not isinstance(model_name, str):
+        raise ValueError("model_name must be a STRING.")
+    if model_name.strip():
+        generation["model"] = model_name.strip()
+    try:
+        settings = json.loads(settings_json or "{}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Generation settings must be valid JSON.") from exc
+    if not isinstance(settings, dict):
+        raise ValueError("Generation settings must be a JSON object.")
+    existing = generation.setdefault("settings", {})
+    if not isinstance(existing, dict):
+        raise ValueError("Sidecar origin.generation.settings must be an object.")
+    existing.update(settings)
+    return updated
+
+
 def _safe_stem(source_name):
     source = str(source_name or "").strip().replace("\\", "/").rstrip("/")
     stem = source.rsplit("/", 1)[-1]
