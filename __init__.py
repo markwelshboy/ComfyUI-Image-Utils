@@ -691,7 +691,10 @@ class ImageUtilsInlineCropPreview:
         return {"ui": {"images": images}, "result": (image,)}
 
 
+from .api_input import MRImageCompareInput
+
 NODE_CLASS_MAPPINGS = {
+    "MRImageCompareInput": MRImageCompareInput,
     "ImageUtilsSidecarLoader": ImageUtilsSidecarLoader,
     "ImageUtilsJsonFieldExtractor": ImageUtilsJsonFieldExtractor,
     "ImageUtilsJsonTagChecker": ImageUtilsJsonTagChecker,
@@ -706,6 +709,7 @@ NODE_CLASS_MAPPINGS = {
     "ImageUtilsInlineCropPreview": ImageUtilsInlineCropPreview,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
+    "MRImageCompareInput": "MR Image-Compare Input (API)",
     "ImageUtilsSidecarLoader": "Image Utils · Image Sidecar Loader",
     "ImageUtilsJsonFieldExtractor": "Image Utils · JSON Field Extractor",
     "ImageUtilsJsonTagChecker": "Image Utils · JSON Tag Checker",
