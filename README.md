@@ -4,6 +4,50 @@ PNG provenance backup: `image_sidecar` iTXt (legacy `krea_sidecar` reads remain 
 
 Generic sidecar-driven ComfyUI utility nodes. Works directly with the full **file_path** STRING output of the [shootthesound Sequential Image Loader](https://github.com/shootthesound/ComfyUI-SequentialImageLoader); no change to that node is required.
 
+## Image-Compare API-controlled input and companion uploads
+
+**MR Image-Compare Input (API)** is a stateless replacement for the
+[shootthesound Sequential Image Loader](https://github.com/shootthesound/ComfyUI-SequentialImageLoader)
+when Image-Compare is driving the ComfyUI `/prompt` queue.
+
+The node appears under **Image Utils / Sidecars**, accepts a single
+`image_name` STRING (relative to ComfyUI's input directory), and returns the
+same six output sockets as the Sequential Image Loader:
+
+| Output | Type | Detail |
+| --- | --- | --- |
+| `image` | IMAGE | RGB source image |
+| `mask` | MASK | Alpha inverted; zeros without alpha |
+| `filename` | STRING | Original basename |
+| `index` | INT | 0 (one API job per image) |
+| `total` | INT | 1 (one API job per image) |
+| `file_path` | STRING | Absolute input path for the existing Image Sidecar Loader |
+
+Connect `file_path` to **Image Sidecar Loader** and pass that node's JSON
+through your existing tag, override, polygon and saver workflow. The
+`image_name` widget is set in each submitted API-format workflow by
+Image-Compare; no ComfyUI browser frontend automation is required. Keep one
+**Image Utils · Save Image + Sidecar (Embedded)** as the output and wire
+`sidecar_json` to preserve source/variant lineage. Leave
+`output_directory` as a widget; the controller sets a per-run relative
+subdirectory of the normal ComfyUI output directory.
+
+Image-Compare uploads images using ComfyUI's ordinary `/upload/image`
+endpoint. This package additionally registers
+`POST /image_compare/upload_companion` for `.sidecar` and
+`.protection_mask` files. Companion uploads are bounded (16 MiB), limited
+to `image-compare/<run-id>/...` under ComfyUI's input directory, written
+atomically and never overwrite different existing content. ComfyUI's
+standard `/view` endpoint supplies the saved PNGs and companions back to
+Image-Compare.
+
+The closed-loop processing controller, settings and live progress are
+implemented in [Image-Compare](https://github.com/markwelshboy/Image-Compare).
+Use a loopback SSH forward to reach a pod; no wide-open ComfyUI service is
+needed.
+
+---
+
 ## Install
 
     cd /opt/ComfyUI/custom_nodes
