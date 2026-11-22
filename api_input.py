@@ -63,6 +63,69 @@ class MRImageCompareInput:
         return {"ui": {"image_compare": {"path": str(path), "filename": path.name}},
                 "result": (tensor, mask, path.name, 0, 1, str(path))}
 
+
+def image_compare_output_manifest(output_root, run_id, *, limit=2048):
+    """Return only completed per-run saver PNGs with valid lineage sidecars.
+
+    No arbitrary path requests, directories outside the assigned run, or
+    partial temp files. ComfyUI /history is volatile; this provides a second
+    read-only way for Image Playground to reconcile a vanished prompt.
+    """
+    import json
+    import re
+
+    if not isinstance(run_id, str) or not re.fullmatch(r"[0-9a-f]{32}", run_id):
+        raise ValueError("Invalid Image-Compare run ID.")
+    root = Path(output_root).resolve()
+    folder = (root / "image-compare" / run_id).resolve()
+    if not folder.is_relative_to(root) or folder.name != run_id:
+        raise ValueError("Output folder escapes the configured ComfyUI output root.")
+    if not folder.is_dir():
+        return {"entries": [], "scanned": 0, "truncated": False}
+    entries = []
+    scanned = 0
+    truncated = False
+    for sidecar in sorted(folder.iterdir()):
+        if not sidecar.name.endswith(".sidecar") or sidecar.is_symlink():
+            continue
+        scanned += 1
+        if scanned > 4096 or len(entries) >= limit:
+            truncated = True
+            break
+        image = folder / (sidecar.name[:-len(".sidecar")] + ".png")
+        if image.is_symlink() or not image.is_file():
+            continue
+        try:
+            if sidecar.stat().st_size > 8 * 1024 * 1024:
+                continue
+            document = json.loads(sidecar.read_text(encoding="utf-8"))
+            lineage = document.get("lineage", {})
+            if not isinstance(lineage, dict):
+                continue
+            parent = lineage.get("parent_artifact_id")
+            asset = lineage.get("asset_id")
+            artifact = lineage.get("artifact_id")
+            if not all(isinstance(v, str) and re.fullmatch(r"[0-9a-f]{32}", v)
+                       for v in (parent, asset, artifact)):
+                continue
+            variant = lineage.get("variant_id")
+            if variant is not None and (
+                    not isinstance(variant, str) or not re.fullmatch(r"[0-9a-f]{32}", variant)):
+                continue
+            entries.append({
+                "filename": image.name,
+                "subfolder": "image-compare/" + run_id,
+                "type": "output",
+                "parent_artifact_id": parent,
+                "asset_id": asset,
+                "variant_id": variant,
+                "artifact_id": artifact,
+            })
+        except (OSError, UnicodeError, ValueError, TypeError, AttributeError):
+            continue
+    return {"entries": entries, "scanned": scanned, "truncated": truncated}
+
+
 # ComfyUI's core /upload/image is for images. Companion files (.sidecar and
 # .protection_mask) use a deliberately restricted byte-upload endpoint, rather
 # than depending on the image asset/thumbnail pipeline accepting JSON/binary.
@@ -72,6 +135,17 @@ try:
     import tempfile
     from server import PromptServer
     from aiohttp import web
+
+    @PromptServer.instance.routes.get("/image_compare/output_manifest")
+    async def image_compare_list_outputs(request):
+        import folder_paths
+        run_id = request.query.get("run_id", "")
+        try:
+            manifest = image_compare_output_manifest(
+                folder_paths.get_output_directory(), run_id)
+        except ValueError as exc:
+            return web.json_response({"error": str(exc)}, status=400)
+        return web.json_response(manifest)
 
     @PromptServer.instance.routes.post("/image_compare/upload_companion")
     async def image_compare_upload_companion(request):
