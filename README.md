@@ -41,6 +41,33 @@ atomically and never overwrite different existing content. ComfyUI's
 standard `/view` endpoint supplies the saved PNGs and companions back to
 Image-Compare.
 
+### Recover saved outputs if ComfyUI history disappears
+
+Image Playground uses ComfyUI's `/history/<prompt-id>` and `/queue` as
+normal completion signals. Those records are transient; if they disappear
+during a restart, the controller may otherwise be unable to download a
+perfectly valid image that the saver already wrote.
+
+This node package now provides a **read-only** endpoint:
+
+`GET /image_compare/output_manifest?run_id=<32-character run ID>`
+
+It lists completed PNG + sidecar pairs **only** in the scoped
+`<ComfyUI-output>/image-compare/<run-id>` directory, returning their
+source parent artifact ID, asset/variant identity and output reference.
+A missing or invalid sidecar is not listed. Paths outside that directory,
+temporary files, and arbitrary user-provided filesystem paths are refused.
+
+The controller uses this to locate a uniquely matching finished image,
+downloads it via ComfyUI's normal `/view` endpoint, **re-validates the
+sidecar lineage**, and attaches it to Review without submitting a second
+GPU prompt. Ambiguous matches are never adopted automatically.
+
+Updating this node pack and **restarting the ComfyUI process** is necessary
+to expose the new endpoint. Older versions still work for normal processing,
+but Image Playground cannot recover outputs from missing ComfyUI history
+without the manifest endpoint.
+
 The closed-loop processing controller, settings and live progress are
 implemented in [Image-Compare](https://github.com/markwelshboy/Image-Compare).
 Use a loopback SSH forward to reach a pod; no wide-open ComfyUI service is
